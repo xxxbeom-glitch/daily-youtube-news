@@ -2,15 +2,20 @@ import { getNewsWindow } from "../../lib/time.js";
 import {
   addVideoToPlaylist,
   createPrivatePlaylist,
+  deletePlaylist,
   findPlaylistByTitle,
   getVideoDetails,
   getYouTubeAccessToken,
+  listMyPlaylists,
   listPlaylistVideoIds,
   listUploadedVideoIds,
 } from "../../lib/youtube.js";
 import { selectNewsVideos } from "../../lib/select.js";
 
 const CHANNELS = ["jtbc_news", "newskbs"];
+const MAX_PLAYLIST_ITEMS = 25;
+const PLAYLIST_RETENTION_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isAuthorized(req) {
   const secret = process.env.CRON_SECRET;
@@ -20,6 +25,38 @@ function isAuthorized(req) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parsePlaylistDate(value) {
+  const match = String(value || "").match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day));
+}
+
+function newsPlaylistDateFromTitle(title) {
+  const match = String(title || "").match(/^오늘의 뉴스 - (\d{4}\.\d{2}\.\d{2})$/);
+  return match ? parsePlaylistDate(match[1]) : null;
+}
+
+async function cleanupExpiredNewsPlaylists(token, currentPlaylistDate) {
+  const currentDateMs = parsePlaylistDate(currentPlaylistDate);
+  if (currentDateMs === null) return { deleted: [], warning: "Could not parse current playlist date" };
+
+  const cutoffMs = currentDateMs - PLAYLIST_RETENTION_DAYS * DAY_MS;
+  const playlists = await listMyPlaylists(token);
+  const expired = playlists.filter((playlist) => {
+    const playlistDateMs = newsPlaylistDateFromTitle(playlist.snippet?.title);
+    return playlistDateMs !== null && playlistDateMs <= cutoffMs;
+  });
+
+  const deleted = [];
+  for (const playlist of expired) {
+    await deletePlaylist(token, playlist.id);
+    deleted.push({ id: playlist.id, title: playlist.snippet?.title || "" });
+  }
+
+  return { deleted, warning: null };
 }
 
 async function addVideoWithRetry(token, playlistId, videoId) {
@@ -42,6 +79,20 @@ export default async function handler(req, res) {
   try {
     const token = await getYouTubeAccessToken();
     const window = getNewsWindow();
+
+    let cleanup = { deleted: [], warning: null };
+    try {
+      cleanup = await cleanupExpiredNewsPlaylists(token, window.playlistDate);
+      if (cleanup.deleted.length) {
+        console.log("expired news playlists deleted", {
+          count: cleanup.deleted.length,
+          titles: cleanup.deleted.map((item) => item.title),
+        });
+      }
+    } catch (error) {
+      cleanup.warning = error instanceof Error ? error.message : String(error);
+      console.warn("playlist cleanup failed", cleanup.warning);
+    }
 
     const channelResults = await Promise.all(
       CHANNELS.map((handle) => listUploadedVideoIds(handle, token, window.start, window.end)),
@@ -71,7 +122,7 @@ export default async function handler(req, res) {
       playlist = await createPrivatePlaylist(
         token,
         window.playlistTitle,
-        "JTBC News + KBS News | 전날 18:00 ~ 당일 09:00 KST | 자동 선별 뉴스 컬렉션",
+        "JTBC News + KBS News | 전날 18:00 ~ 당일 09:00 KST | 15~25개 자동 선별 | 7일 후 자동 삭제",
       );
       createdPlaylist = true;
       // YouTube can briefly return playlistNotFound immediately after creating a playlist.
@@ -85,7 +136,8 @@ export default async function handler(req, res) {
       : new Set(await listPlaylistVideoIds(token, playlistId));
     let added = 0;
 
-    for (const video of selection.videos.slice(0, 15)) {
+    for (const video of selection.videos.slice(0, MAX_PLAYLIST_ITEMS)) {
+      if (existingIds.size >= MAX_PLAYLIST_ITEMS) break;
       if (existingIds.has(video.videoId)) continue;
       await addVideoWithRetry(token, playlistId, video.videoId);
       existingIds.add(video.videoId);
@@ -108,6 +160,12 @@ export default async function handler(req, res) {
       addedCount: added,
       selectionMode: selection.mode,
       warning: selection.warning || null,
+      retention: {
+        days: PLAYLIST_RETENTION_DAYS,
+        deletedCount: cleanup.deleted.length,
+        deletedTitles: cleanup.deleted.map((item) => item.title),
+        warning: cleanup.warning,
+      },
       channels: channelResults.map((channel) => ({
         handle: channel.handle,
         channelTitle: channel.channelTitle,

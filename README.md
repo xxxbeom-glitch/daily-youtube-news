@@ -54,6 +54,10 @@
 
 Cron 요청은 `CRON_SECRET` Bearer 인증을 확인합니다.
 
+## 배포
+
+GitHub 저장소의 `main` 브랜치는 Vercel 프로젝트와 연결되어 있으며, 이후 커밋은 자동으로 배포됩니다.
+
 ## 상태 확인
 
 `GET /api/status?token=STATUS_SECRET`

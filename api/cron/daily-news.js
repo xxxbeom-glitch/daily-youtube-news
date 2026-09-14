@@ -13,6 +13,12 @@ import {
 import { selectNewsVideos } from "../../lib/select.js";
 
 const CHANNELS = ["jtbc_news", "newskbs"];
+const WEATHER_SOURCES = [
+  { handle: "newskbs", broadcaster: "KBS", preferredCaster: "박소연" },
+  { handle: "yonhapnewstv23", broadcaster: "연합뉴스TV", preferredCaster: "이소연" },
+];
+const WEATHER_MIN_SECONDS = 60;
+const WEATHER_MAX_SECONDS = 300;
 const MAX_PLAYLIST_ITEMS = 25;
 const PLAYLIST_RETENTION_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,6 +31,45 @@ function isAuthorized(req) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry(operation, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) break;
+      await sleep(1500 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+function kstDateParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+  };
+}
+
+function getMorningWeatherWindow(now = new Date()) {
+  const { year, month, day } = kstDateParts(now);
+  const startMs = Date.UTC(year, month - 1, day, -5, 0, 0, 0); // 04:00 KST
+  const latestEndMs = Date.UTC(year, month - 1, day, 1, 0, 0, 0); // 10:00 KST
+  return {
+    start: new Date(startMs),
+    end: new Date(Math.min(now.getTime(), latestEndMs)),
+  };
 }
 
 function parsePlaylistDate(value) {
@@ -59,10 +104,108 @@ async function cleanupExpiredNewsPlaylists(token, currentPlaylistDate) {
   return { deleted, warning: null };
 }
 
-async function addVideoWithRetry(token, playlistId, videoId) {
+async function selectMorningWeather(token) {
+  const window = getMorningWeatherWindow();
+  if (window.end.getTime() <= window.start.getTime()) {
+    return {
+      video: null,
+      mode: "none",
+      candidateCount: 0,
+      warning: "Morning weather window has not started yet",
+      window,
+    };
+  }
+
+  const settled = await Promise.allSettled(
+    WEATHER_SOURCES.map((source) =>
+      listUploadedVideoIds(source.handle, token, window.start, window.end, {
+        query: "날씨",
+        maxPages: 2,
+      }),
+    ),
+  );
+
+  const sourceResults = [];
+  const warnings = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      sourceResults.push({ ...WEATHER_SOURCES[index], ...result.value });
+    } else {
+      const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      warnings.push(`${WEATHER_SOURCES[index].broadcaster}: ${message}`);
+    }
+  });
+
+  const allIds = [...new Set(sourceResults.flatMap((source) => source.videoIds))];
+  if (!allIds.length) {
+    return {
+      video: null,
+      mode: "none",
+      candidateCount: 0,
+      warning: warnings.join(" | ") || null,
+      window,
+    };
+  }
+
+  const details = await getVideoDetails(allIds, token);
+  const sourceByChannelId = new Map(sourceResults.map((source) => [source.channelId, source]));
+  const candidates = details
+    .filter((video) =>
+      video.durationSeconds >= WEATHER_MIN_SECONDS &&
+      video.durationSeconds <= WEATHER_MAX_SECONDS &&
+      video.liveBroadcastContent === "none" &&
+      video.privacyStatus === "public" &&
+      !video.isLikelyShort &&
+      /(날씨|기상)/.test(video.title),
+    )
+    .map((video) => ({ video, source: sourceByChannelId.get(video.channelId) }))
+    .filter((item) => item.source)
+    .sort((a, b) => new Date(b.video.publishedAt) - new Date(a.video.publishedAt));
+
+  const preferred = candidates.filter(({ video, source }) => {
+    const metadata = `${video.title}\n${video.description}`;
+    return metadata.includes(source.preferredCaster);
+  });
+
+  if (preferred.length) {
+    const chosen = preferred[0];
+    return {
+      video: chosen.video,
+      mode: "preferred-caster",
+      broadcaster: chosen.source.broadcaster,
+      caster: chosen.source.preferredCaster,
+      candidateCount: candidates.length,
+      warning: warnings.join(" | ") || null,
+      window,
+    };
+  }
+
+  const kbsFallback = candidates.find(({ source }) => source.handle === "newskbs");
+  if (kbsFallback) {
+    return {
+      video: kbsFallback.video,
+      mode: "kbs-fallback",
+      broadcaster: "KBS",
+      caster: null,
+      candidateCount: candidates.length,
+      warning: warnings.join(" | ") || null,
+      window,
+    };
+  }
+
+  return {
+    video: null,
+    mode: "none",
+    candidateCount: candidates.length,
+    warning: warnings.join(" | ") || null,
+    window,
+  };
+}
+
+async function addVideoWithRetry(token, playlistId, videoId, position) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await addVideoToPlaylist(token, playlistId, videoId);
+      return await addVideoToPlaylist(token, playlistId, videoId, position);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const isPropagation404 = message.includes("YouTube POST playlistItems failed (404)");
@@ -94,6 +237,15 @@ export default async function handler(req, res) {
       console.warn("playlist cleanup failed", cleanup.warning);
     }
 
+    const weatherPromise = withRetry(() => selectMorningWeather(token), 3)
+      .catch((error) => ({
+        video: null,
+        mode: "error",
+        candidateCount: 0,
+        warning: error instanceof Error ? error.message : String(error),
+        window: getMorningWeatherWindow(),
+      }));
+
     const channelResults = await Promise.all(
       CHANNELS.map((handle) => listUploadedVideoIds(handle, token, window.start, window.end)),
     );
@@ -108,12 +260,24 @@ export default async function handler(req, res) {
       !video.isLikelyShort,
     );
 
-    const selection = await selectNewsVideos(candidates);
+    const [selection, weather] = await Promise.all([
+      selectNewsVideos(candidates),
+      weatherPromise,
+    ]);
+
     console.log("news selection completed", {
       mode: selection.mode,
       candidateCount: candidates.length,
       selectedCount: selection.videos.length,
       warning: selection.warning || null,
+    });
+    console.log("morning weather selection completed", {
+      mode: weather.mode,
+      broadcaster: weather.broadcaster || null,
+      caster: weather.caster || null,
+      title: weather.video?.title || null,
+      candidateCount: weather.candidateCount,
+      warning: weather.warning || null,
     });
 
     let playlist = await findPlaylistByTitle(token, window.playlistTitle);
@@ -122,7 +286,7 @@ export default async function handler(req, res) {
       playlist = await createPrivatePlaylist(
         token,
         window.playlistTitle,
-        "JTBC News + KBS News | 전날 18:00 ~ 당일 09:00 KST | 15~25개 자동 선별 | 7일 후 자동 삭제",
+        "첫 영상: KBS/연합뉴스TV 아침 날씨 | 이후 JTBC News + KBS News 자동 선별 | 전체 최대 25개 | 7일 후 자동 삭제",
       );
       createdPlaylist = true;
       // YouTube can briefly return playlistNotFound immediately after creating a playlist.
@@ -134,14 +298,21 @@ export default async function handler(req, res) {
     const existingIds = createdPlaylist
       ? new Set()
       : new Set(await listPlaylistVideoIds(token, playlistId));
-    let added = 0;
+    let newsAdded = 0;
+    let weatherAdded = 0;
 
-    for (const video of selection.videos.slice(0, MAX_PLAYLIST_ITEMS)) {
+    if (weather.video && existingIds.size < MAX_PLAYLIST_ITEMS && !existingIds.has(weather.video.videoId)) {
+      await addVideoWithRetry(token, playlistId, weather.video.videoId, 0);
+      existingIds.add(weather.video.videoId);
+      weatherAdded = 1;
+    }
+
+    for (const video of selection.videos) {
       if (existingIds.size >= MAX_PLAYLIST_ITEMS) break;
       if (existingIds.has(video.videoId)) continue;
       await addVideoWithRetry(token, playlistId, video.videoId);
       existingIds.add(video.videoId);
-      added += 1;
+      newsAdded += 1;
     }
 
     return res.status(200).json({
@@ -157,9 +328,25 @@ export default async function handler(req, res) {
       candidateCount: candidates.length,
       selectedCount: selection.videos.length,
       playlistItemCount: existingIds.size,
-      addedCount: added,
+      addedCount: newsAdded + weatherAdded,
+      newsAddedCount: newsAdded,
       selectionMode: selection.mode,
       warning: selection.warning || null,
+      weather: {
+        found: Boolean(weather.video),
+        mode: weather.mode,
+        broadcaster: weather.broadcaster || null,
+        caster: weather.caster || null,
+        title: weather.video?.title || null,
+        videoId: weather.video?.videoId || null,
+        addedCount: weatherAdded,
+        candidateCount: weather.candidateCount,
+        window: {
+          start: weather.window?.start?.toISOString?.() || null,
+          end: weather.window?.end?.toISOString?.() || null,
+        },
+        warning: weather.warning || null,
+      },
       retention: {
         days: PLAYLIST_RETENTION_DAYS,
         deletedCount: cleanup.deleted.length,

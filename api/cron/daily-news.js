@@ -84,6 +84,13 @@ function newsPlaylistDateFromTitle(title) {
   return match ? parsePlaylistDate(match[1]) : null;
 }
 
+function previousNewsPlaylistTitle(currentPlaylistDate) {
+  const currentDateMs = parsePlaylistDate(currentPlaylistDate);
+  if (currentDateMs === null) return null;
+  const date = new Date(currentDateMs - DAY_MS).toISOString().slice(0, 10).replace(/-/g, ".");
+  return `오늘의 뉴스 - ${date}`;
+}
+
 async function cleanupExpiredNewsPlaylists(token, currentPlaylistDate) {
   const currentDateMs = parsePlaylistDate(currentPlaylistDate);
   if (currentDateMs === null) return { deleted: [], warning: "Could not parse current playlist date" };
@@ -202,6 +209,52 @@ async function selectMorningWeather(token) {
   };
 }
 
+function isFreshWUnboxing(video, kbsChannelId, previousIds) {
+  return Boolean(
+    video &&
+    video.channelId === kbsChannelId &&
+    /W\s*언박싱/i.test(video.title) &&
+    video.liveBroadcastContent === "none" &&
+    video.privacyStatus === "public" &&
+    !video.isLikelyShort &&
+    !previousIds.has(video.videoId)
+  );
+}
+
+function ensureRequiredWUnboxing(videos, wVideo) {
+  if (!wVideo) return videos;
+  if (videos.some((video) => video.videoId === wVideo.videoId)) return videos;
+
+  const required = {
+    ...wVideo,
+    selectionCategory: "사회",
+    selectionScore: 50,
+    selectionReason: "required KBS W 언박싱",
+  };
+  const result = [...videos];
+  const insertAt = result.findIndex((video) => (video.selectionScore ?? 0) < required.selectionScore);
+  result.splice(insertAt >= 0 ? insertAt : result.length, 0, required);
+
+  while (result.length > 25) {
+    const removable = result.findLastIndex((video) => video.videoId !== wVideo.videoId);
+    if (removable < 0) break;
+    result.splice(removable, 1);
+  }
+  return result;
+}
+
+function limitNewsQueue(videos, limit, requiredVideoId) {
+  if (limit <= 0) return [];
+  const limited = videos.slice(0, limit);
+  if (!requiredVideoId || limited.some((video) => video.videoId === requiredVideoId)) return limited;
+
+  const required = videos.find((video) => video.videoId === requiredVideoId);
+  if (!required) return limited;
+  if (limited.length < limit) limited.push(required);
+  else limited[limited.length - 1] = required;
+  return limited;
+}
+
 async function addVideoWithRetry(token, playlistId, videoId, position) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -252,23 +305,51 @@ export default async function handler(req, res) {
 
     const allIds = [...new Set(channelResults.flatMap((channel) => channel.videoIds))];
     const details = await getVideoDetails(allIds, token);
+
+    let previousIds = new Set();
+    let wWarning = null;
+    const previousTitle = previousNewsPlaylistTitle(window.playlistDate);
+    if (previousTitle) {
+      try {
+        const previousPlaylist = await withRetry(() => findPlaylistByTitle(token, previousTitle), 3);
+        if (previousPlaylist) {
+          previousIds = new Set(await withRetry(() => listPlaylistVideoIds(token, previousPlaylist.id), 3));
+        }
+      } catch (error) {
+        wWarning = error instanceof Error ? error.message : String(error);
+        console.warn("W 언박싱 previous-playlist check failed; skipping forced inclusion", wWarning);
+        previousIds = null;
+      }
+    }
+
+    const kbsChannelId = channelResults.find((channel) => channel.handle === "newskbs")?.channelId;
+    const wCandidates = previousIds
+      ? details
+          .filter((video) => isFreshWUnboxing(video, kbsChannelId, previousIds))
+          .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))
+      : [];
+    const wUnboxing = wCandidates[0] || null;
+
     const candidates = details.filter((video) =>
-      video.durationSeconds >= 120 &&
-      video.durationSeconds <= 300 &&
-      video.liveBroadcastContent === "none" &&
-      video.privacyStatus === "public" &&
-      !video.isLikelyShort,
+      (
+        video.durationSeconds >= 120 &&
+        video.durationSeconds <= 300 &&
+        video.liveBroadcastContent === "none" &&
+        video.privacyStatus === "public" &&
+        !video.isLikelyShort
+      ) || video.videoId === wUnboxing?.videoId,
     );
 
     const [selection, weather] = await Promise.all([
       selectNewsVideos(candidates),
       weatherPromise,
     ]);
+    const orderedNews = ensureRequiredWUnboxing(selection.videos, wUnboxing);
 
     console.log("news selection completed", {
       mode: selection.mode,
       candidateCount: candidates.length,
-      selectedCount: selection.videos.length,
+      selectedCount: orderedNews.length,
       warning: selection.warning || null,
     });
     console.log("morning weather selection completed", {
@@ -279,6 +360,13 @@ export default async function handler(req, res) {
       candidateCount: weather.candidateCount,
       warning: weather.warning || null,
     });
+    console.log("W 언박싱 selection completed", {
+      found: Boolean(wUnboxing),
+      title: wUnboxing?.title || null,
+      videoId: wUnboxing?.videoId || null,
+      previousPlaylistTitle: previousTitle,
+      warning: wWarning,
+    });
 
     let playlist = await findPlaylistByTitle(token, window.playlistTitle);
     let createdPlaylist = false;
@@ -286,7 +374,7 @@ export default async function handler(req, res) {
       playlist = await createPrivatePlaylist(
         token,
         window.playlistTitle,
-        "첫 영상: KBS/연합뉴스TV 아침 날씨 | 이후 JTBC News + KBS News 자동 선별 | 전체 최대 25개 | 7일 후 자동 삭제",
+        "첫 영상: KBS/연합뉴스TV 아침 날씨 | KBS W 언박싱 신규 영상은 필수 포함 | 이후 JTBC News + KBS News 중요도순 자동 선별 | 전체 최대 25개 | 7일 후 자동 삭제",
       );
       createdPlaylist = true;
       // YouTube can briefly return playlistNotFound immediately after creating a playlist.
@@ -307,7 +395,9 @@ export default async function handler(req, res) {
       weatherAdded = 1;
     }
 
-    for (const video of selection.videos) {
+    const availableNewsSlots = Math.max(0, MAX_PLAYLIST_ITEMS - existingIds.size);
+    const newsQueue = limitNewsQueue(orderedNews, availableNewsSlots, wUnboxing?.videoId);
+    for (const video of newsQueue) {
       if (existingIds.size >= MAX_PLAYLIST_ITEMS) break;
       if (existingIds.has(video.videoId)) continue;
       await addVideoWithRetry(token, playlistId, video.videoId);
@@ -326,7 +416,7 @@ export default async function handler(req, res) {
         end: window.end.toISOString(),
       },
       candidateCount: candidates.length,
-      selectedCount: selection.videos.length,
+      selectedCount: orderedNews.length,
       playlistItemCount: existingIds.size,
       addedCount: newsAdded + weatherAdded,
       newsAddedCount: newsAdded,
@@ -346,6 +436,14 @@ export default async function handler(req, res) {
           end: weather.window?.end?.toISOString?.() || null,
         },
         warning: weather.warning || null,
+      },
+      wUnboxing: {
+        found: Boolean(wUnboxing),
+        title: wUnboxing?.title || null,
+        videoId: wUnboxing?.videoId || null,
+        previousPlaylistTitle: previousTitle,
+        skippedIfAlreadyUsedYesterday: true,
+        warning: wWarning,
       },
       retention: {
         days: PLAYLIST_RETENTION_DAYS,

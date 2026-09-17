@@ -19,7 +19,7 @@ const WEATHER_SOURCES = [
 ];
 const WEATHER_MIN_SECONDS = 60;
 const WEATHER_MAX_SECONDS = 300;
-const MAX_PLAYLIST_ITEMS = 25;
+const MAX_PLAYLIST_ITEMS = 10;
 const PLAYLIST_RETENTION_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -235,7 +235,7 @@ function ensureRequiredWUnboxing(videos, wVideo) {
   const insertAt = result.findIndex((video) => (video.selectionScore ?? 0) < required.selectionScore);
   result.splice(insertAt >= 0 ? insertAt : result.length, 0, required);
 
-  while (result.length > 25) {
+  while (result.length > MAX_PLAYLIST_ITEMS) {
     const removable = result.findLastIndex((video) => video.videoId !== wVideo.videoId);
     if (removable < 0) break;
     result.splice(removable, 1);
@@ -374,7 +374,7 @@ export default async function handler(req, res) {
       playlist = await createPrivatePlaylist(
         token,
         window.playlistTitle,
-        "첫 영상: KBS/연합뉴스TV 아침 날씨 | KBS W 언박싱 신규 영상은 필수 포함 | 이후 JTBC News + KBS News 중요도순 자동 선별 | 전체 최대 25개 | 7일 후 자동 삭제",
+        "첫 영상: KBS/연합뉴스TV 아침 날씨 | KBS W 언박싱 신규 영상은 필수 포함 | 이후 JTBC News + KBS News 중요도순 자동 선별 | 전체 최대 10개 | 7일 후 자동 삭제",
       );
       createdPlaylist = true;
       // YouTube can briefly return playlistNotFound immediately after creating a playlist.

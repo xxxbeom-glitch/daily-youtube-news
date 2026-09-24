@@ -94,19 +94,36 @@ async function uploadPlaylistCover(token, bytes) {
   return uploadText ? JSON.parse(uploadText) : null;
 }
 
-async function listPlaylistImages(token) {
-  const url = new URL("https://www.googleapis.com/youtube/v3/playlistImages");
-  url.searchParams.set("part", "snippet");
-  url.searchParams.set("playlistId", PLAYLIST_ID);
+async function verifyPlaylistCover(token) {
+  const playlistImagesUrl = new URL("https://www.googleapis.com/youtube/v3/playlistImages");
+  playlistImagesUrl.searchParams.set("part", "snippet");
+  playlistImagesUrl.searchParams.set("parent", PLAYLIST_ID);
 
-  const response = await fetch(url, {
+  const imagesResponse = await fetch(playlistImagesUrl, {
     headers: { authorization: `Bearer ${token}` },
   });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`YouTube playlistImages list failed (${response.status}): ${text.slice(0, 700)}`);
-  }
-  return JSON.parse(text);
+  const imagesText = await imagesResponse.text();
+
+  const playlistUrl = new URL("https://www.googleapis.com/youtube/v3/playlists");
+  playlistUrl.searchParams.set("part", "snippet,status");
+  playlistUrl.searchParams.set("id", PLAYLIST_ID);
+  const playlistResponse = await fetch(playlistUrl, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const playlistText = await playlistResponse.text();
+
+  return {
+    playlistImages: {
+      ok: imagesResponse.ok,
+      status: imagesResponse.status,
+      body: imagesText ? JSON.parse(imagesText) : null,
+    },
+    playlist: {
+      ok: playlistResponse.ok,
+      status: playlistResponse.status,
+      body: playlistText ? JSON.parse(playlistText) : null,
+    },
+  };
 }
 
 export default async function handler(req, res) {
@@ -115,9 +132,20 @@ export default async function handler(req, res) {
 
   try {
     const token = await getYouTubeAccessToken();
+
+    if (req.query?.verify === "1") {
+      const verified = await verifyPlaylistCover(token);
+      return res.status(200).json({
+        ok: true,
+        playlistId: PLAYLIST_ID,
+        youtubeMusicUrl: `https://music.youtube.com/playlist?list=${PLAYLIST_ID}`,
+        verified,
+      });
+    }
+
     const { bytes, prompt } = await generateCover();
     const uploaded = await uploadPlaylistCover(token, bytes);
-    const verified = await listPlaylistImages(token);
+    const verified = await verifyPlaylistCover(token);
 
     return res.status(200).json({
       ok: true,

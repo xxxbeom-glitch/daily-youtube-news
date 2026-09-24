@@ -79,3 +79,5 @@ Tagged push dry-runs use a 10-track test target.
 For tagged 10-track QA runs, YouTube `search.list` is disabled; resolution uses cached IDs and MusicBrainz-linked YouTube videos/playlists first, then a GPT-5.6 Luna web locator for unresolved exact YouTube watch URLs.
 
 Failed QA runs upload a resolver audit so unresolved YouTube-ID paths can be inspected without consuming search quota.
+
+Per-track Luna lookup forces web search for unresolved exact YouTube watch URLs and stops after the test target is verified.

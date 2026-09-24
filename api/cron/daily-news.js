@@ -19,6 +19,9 @@ const WEATHER_SOURCES = [
 ];
 const WEATHER_MIN_SECONDS = 60;
 const WEATHER_MAX_SECONDS = 300;
+const US_MARKET_SOURCE = { handle: "sbsnews8", broadcaster: "SBS" };
+const US_MARKET_MIN_SECONDS = 60;
+const US_MARKET_MAX_SECONDS = 300;
 const MAX_PLAYLIST_ITEMS = 10;
 const PLAYLIST_RETENTION_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -209,6 +212,54 @@ async function selectMorningWeather(token) {
   };
 }
 
+async function selectMorningUsMarket(token, window) {
+  const source = await listUploadedVideoIds(
+    US_MARKET_SOURCE.handle,
+    token,
+    window.start,
+    window.end,
+    {
+      query: "뉴욕증시",
+      maxPages: 2,
+    },
+  );
+
+  if (!source.videoIds.length) {
+    return {
+      video: null,
+      mode: "none",
+      candidateCount: 0,
+      broadcaster: US_MARKET_SOURCE.broadcaster,
+      channelTitle: source.channelTitle,
+      window,
+    };
+  }
+
+  const details = await getVideoDetails(source.videoIds, token);
+  const candidates = details
+    .filter((video) => {
+      const metadata = `${video.title}\n${video.description}`;
+      return (
+        video.durationSeconds >= US_MARKET_MIN_SECONDS &&
+        video.durationSeconds <= US_MARKET_MAX_SECONDS &&
+        video.liveBroadcastContent === "none" &&
+        video.privacyStatus === "public" &&
+        !video.isLikelyShort &&
+        /뉴욕\s*증시|미국\s*증시|미\s*증시/i.test(metadata)
+      );
+    })
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+
+  return {
+    video: candidates[0] || null,
+    mode: candidates.length ? "sbs-morning-market" : "none",
+    candidateCount: candidates.length,
+    broadcaster: US_MARKET_SOURCE.broadcaster,
+    channelTitle: source.channelTitle,
+    window,
+  };
+}
+
 function isFreshWUnboxing(video, kbsChannelId, previousIds) {
   return Boolean(
     video &&
@@ -299,6 +350,17 @@ export default async function handler(req, res) {
         window: getMorningWeatherWindow(),
       }));
 
+    const usMarketPromise = withRetry(() => selectMorningUsMarket(token, window), 3)
+      .catch((error) => ({
+        video: null,
+        mode: "error",
+        candidateCount: 0,
+        broadcaster: US_MARKET_SOURCE.broadcaster,
+        channelTitle: null,
+        warning: error instanceof Error ? error.message : String(error),
+        window,
+      }));
+
     const channelResults = await Promise.all(
       CHANNELS.map((handle) => listUploadedVideoIds(handle, token, window.start, window.end)),
     );
@@ -340,9 +402,10 @@ export default async function handler(req, res) {
       ) || video.videoId === wUnboxing?.videoId,
     );
 
-    const [selection, weather] = await Promise.all([
+    const [selection, weather, usMarket] = await Promise.all([
       selectNewsVideos(candidates),
       weatherPromise,
+      usMarketPromise,
     ]);
     const orderedNews = ensureRequiredWUnboxing(selection.videos, wUnboxing);
 
@@ -360,6 +423,15 @@ export default async function handler(req, res) {
       candidateCount: weather.candidateCount,
       warning: weather.warning || null,
     });
+    console.log("SBS New York market selection completed", {
+      mode: usMarket.mode,
+      broadcaster: usMarket.broadcaster,
+      channelTitle: usMarket.channelTitle || null,
+      title: usMarket.video?.title || null,
+      videoId: usMarket.video?.videoId || null,
+      candidateCount: usMarket.candidateCount,
+      warning: usMarket.warning || null,
+    });
     console.log("W 언박싱 selection completed", {
       found: Boolean(wUnboxing),
       title: wUnboxing?.title || null,
@@ -374,7 +446,7 @@ export default async function handler(req, res) {
       playlist = await createPrivatePlaylist(
         token,
         window.playlistTitle,
-        "첫 영상: KBS/연합뉴스TV 아침 날씨 | KBS W 언박싱 신규 영상은 필수 포함 | 이후 JTBC News + KBS News 중요도순 자동 선별 | 전체 최대 10개 | 7일 후 자동 삭제",
+        "첫 영상: KBS/연합뉴스TV 아침 날씨 | SBS 모닝와이드 뉴욕증시 신규 클립 우선 포함 | KBS W 언박싱 신규 영상 필수 포함 | 이후 JTBC News + KBS News 중요도순 자동 선별 | 전체 최대 10개 | 7일 후 자동 삭제",
       );
       createdPlaylist = true;
       // YouTube can briefly return playlistNotFound immediately after creating a playlist.
@@ -388,11 +460,19 @@ export default async function handler(req, res) {
       : new Set(await listPlaylistVideoIds(token, playlistId));
     let newsAdded = 0;
     let weatherAdded = 0;
+    let usMarketAdded = 0;
 
     if (weather.video && existingIds.size < MAX_PLAYLIST_ITEMS && !existingIds.has(weather.video.videoId)) {
       await addVideoWithRetry(token, playlistId, weather.video.videoId, 0);
       existingIds.add(weather.video.videoId);
       weatherAdded = 1;
+    }
+
+    if (usMarket.video && existingIds.size < MAX_PLAYLIST_ITEMS && !existingIds.has(usMarket.video.videoId)) {
+      const marketPosition = weather.video && existingIds.has(weather.video.videoId) ? 1 : 0;
+      await addVideoWithRetry(token, playlistId, usMarket.video.videoId, marketPosition);
+      existingIds.add(usMarket.video.videoId);
+      usMarketAdded = 1;
     }
 
     const availableNewsSlots = Math.max(0, MAX_PLAYLIST_ITEMS - existingIds.size);
@@ -418,7 +498,7 @@ export default async function handler(req, res) {
       candidateCount: candidates.length,
       selectedCount: orderedNews.length,
       playlistItemCount: existingIds.size,
-      addedCount: newsAdded + weatherAdded,
+      addedCount: newsAdded + weatherAdded + usMarketAdded,
       newsAddedCount: newsAdded,
       selectionMode: selection.mode,
       warning: selection.warning || null,
@@ -436,6 +516,21 @@ export default async function handler(req, res) {
           end: weather.window?.end?.toISOString?.() || null,
         },
         warning: weather.warning || null,
+      },
+      usMarket: {
+        found: Boolean(usMarket.video),
+        mode: usMarket.mode,
+        broadcaster: usMarket.broadcaster,
+        channelTitle: usMarket.channelTitle || null,
+        title: usMarket.video?.title || null,
+        videoId: usMarket.video?.videoId || null,
+        addedCount: usMarketAdded,
+        candidateCount: usMarket.candidateCount,
+        window: {
+          start: usMarket.window?.start?.toISOString?.() || null,
+          end: usMarket.window?.end?.toISOString?.() || null,
+        },
+        warning: usMarket.warning || null,
       },
       wUnboxing: {
         found: Boolean(wUnboxing),

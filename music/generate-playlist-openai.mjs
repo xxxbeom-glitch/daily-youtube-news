@@ -1376,7 +1376,7 @@ async function main() {
   }
 
   const deterministic = applyDeterministicScores(hard.kept, profile, genre);
-  const effectiveRerankLimit = TEST_TRACK_LIMIT > 0 ? Math.max(20, TEST_TRACK_LIMIT + 10) : RERANK_LIMIT;
+  const effectiveRerankLimit = TEST_TRACK_LIMIT > 0 ? Math.max(30, TEST_TRACK_LIMIT + 20) : RERANK_LIMIT;
   const rerankPool = selectRerankPool(deterministic, profile, effectiveRerankLimit);
 
   let curated;

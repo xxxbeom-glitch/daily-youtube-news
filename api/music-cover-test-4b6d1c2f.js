@@ -51,8 +51,6 @@ async function uploadPlaylistCover(token, bytes) {
     snippet: {
       playlistId: PLAYLIST_ID,
       type: "hero",
-      width: 1024,
-      height: 1024,
     },
   });
 

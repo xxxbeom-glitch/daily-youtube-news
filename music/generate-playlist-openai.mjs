@@ -1837,7 +1837,7 @@ async function main() {
         album: t.album,
         video_id: t.youtube.videoId,
         audio_type: t.youtube.audioType,
-        resolution_source: t.youtube.resolutionSource || cache?.entries?.[trackKey(t)]?.resolution_source || null
+        resolution_source: t.youtube.resolutionSource || youtubeCache.entries?.[trackKey(t)]?.resolution_source || null
       })),
       unresolved: shortlist
         .filter((t) => !resolution.resolved.some((r) => trackKey(r) === trackKey(t)))

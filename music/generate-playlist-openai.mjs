@@ -1813,6 +1813,43 @@ async function main() {
       ? " YouTube search quota was exhausted; checkpoint saved for resume."
       : " Checkpoint saved for resume.";
 
+    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+    const failurePath = path.join(OUTPUT_DIR, genre + "-openai-v3-failure-" + Date.now() + ".json");
+    await writeJson(failurePath, {
+      ok: false,
+      genre,
+      test_track_limit: TEST_TRACK_LIMIT,
+      model: OPENAI_MODEL,
+      locator_model: OPENAI_LOCATOR_MODEL,
+      youtube_search_fallback: YOUTUBE_SEARCH_FALLBACK,
+      youtube_searches: resolution.searches,
+      youtube_relation_attempts: resolution.relationAttempts,
+      youtube_relation_resolved: resolution.relationResolved,
+      openai_web_locator_attempts: resolution.webLocatorAttempts,
+      openai_web_locator_resolved: resolution.webLocatorResolved,
+      openai_web_locator_response_id: resolution.webLocatorResponseId,
+      openai_web_locator_usage: resolution.webLocatorUsage,
+      verified_raw_minutes: Number(possibleMinutes.toFixed(1)),
+      resolved: resolution.resolved.map((t) => ({
+        candidate_id: t.candidate_id,
+        artist: t.display_artist,
+        title: t.title,
+        album: t.album,
+        video_id: t.youtube.videoId,
+        audio_type: t.youtube.audioType,
+        resolution_source: t.youtube.resolutionSource || cache?.entries?.[trackKey(t)]?.resolution_source || null
+      })),
+      unresolved: shortlist
+        .filter((t) => !resolution.resolved.some((r) => trackKey(r) === trackKey(t)))
+        .map((t) => ({
+          candidate_id: t.candidate_id,
+          artist: t.display_artist,
+          title: t.title,
+          album: t.album,
+          cache: youtubeCache.entries?.[trackKey(t)] || null
+        }))
+    });
+
     const targetDescription = TEST_TRACK_LIMIT > 0
       ? TEST_TRACK_LIMIT + " verified tracks"
       : "120 minutes";
@@ -1823,7 +1860,9 @@ async function main() {
       possibleMinutes.toFixed(1) +
       " min after " +
       resolution.searches +
-      " new YouTube searches." +
+      " new YouTube searches. Audit: " +
+      failurePath +
+      "." +
       suffix
     );
   }

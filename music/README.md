@@ -56,6 +56,20 @@ Open GitHub Actions -> `Music discovery playlist` -> `Run workflow`, choose `hip
 
 Each run uploads a JSON audit artifact containing hard-filter rejections, YouTube verification failures, selected tracks, model versions, model response IDs and curation scores.
 
-## Gemini v2 cost policy
+## OpenAI v3 recommendation design
 
-The active music workflow uses ListenBrainz and MusicBrainz for factual catalog discovery, Gemini 3.1 Flash-Lite for bulk classification, and Gemini 3.6 Flash for final compact scoring. The workflow contains no OpenAI fallback, caps Gemini inference at five calls per run, and saves checkpoints so YouTube-stage failures can resume without repeating Gemini scoring.
+The active music workflow uses ListenBrainz as the main recommendation-candidate source and MusicBrainz for factual release metadata. Deterministic code applies hard rules and a cheap ranking before any LLM call.
+
+Only the top compact candidate pool is sent to OpenAI once for subjective taste reranking. The workflow uses `gpt-5.6-sol` with low reasoning effort, no OpenAI web search, and no automatic expensive-model fallback.
+
+After reranking, only shortlisted tracks are resolved against YouTube. Verified YouTube video IDs are cached in `.music-state/youtube-cache.json`, so repeat runs can avoid unnecessary `search.list` calls. YouTube quota exhaustion saves resume state instead of repeating OpenAI reranking.
+
+Required secrets for the active workflow:
+
+- `OPENAI_API_KEY`
+- `LISTENBRAINZ_TOKEN`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `YOUTUBE_REFRESH_TOKEN`
+
+Manual runs default to `create_playlist=false` for dry-run QA. Enable playlist creation only after reviewing the audit output.

@@ -10,7 +10,7 @@ const OPENAI_MODEL = process.env.OPENAI_CURATOR_MODEL || "gpt-5.6-sol";
 const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
 const OPENAI_LOCATOR_MODEL = process.env.OPENAI_LOCATOR_MODEL || "gpt-5.6-luna";
 const OPENAI_WEB_LOCATOR = String(process.env.OPENAI_WEB_LOCATOR || "true").toLowerCase() === "true";
-const OPENAI_WEB_LOCATOR_MAX_CALLS = Math.max(1, Math.min(20, Number(process.env.OPENAI_WEB_LOCATOR_MAX_CALLS || 12)));
+const OPENAI_WEB_LOCATOR_MAX_CALLS = Math.max(1, Math.min(20, Number(process.env.OPENAI_WEB_LOCATOR_MAX_CALLS || 20)));
 const WEB_LOCATOR_VERSION = "youtube-locator-v3-broad";
 const CATALOG_TARGET = Math.max(80, Math.min(140, Number(process.env.MUSIC_CATALOG_TARGET || 110)));
 const RERANK_LIMIT = Math.max(30, Math.min(55, Number(process.env.MUSIC_RERANK_LIMIT || 48)));
@@ -1757,7 +1757,7 @@ async function main() {
   }
 
   const deterministic = applyDeterministicScores(hard.kept, profile, genre);
-  const effectiveRerankLimit = TEST_TRACK_LIMIT > 0 ? Math.max(30, TEST_TRACK_LIMIT + 20) : RERANK_LIMIT;
+  const effectiveRerankLimit = TEST_TRACK_LIMIT > 0 ? Math.max(45, TEST_TRACK_LIMIT + 35) : RERANK_LIMIT;
   const rerankPool = selectRerankPool(deterministic, profile, effectiveRerankLimit);
 
   let curated;
@@ -1765,7 +1765,7 @@ async function main() {
   let openaiResponseId = checkpoint.openai_response_id || null;
   let openaiCalls = 0;
 
-  if (checkpoint.curated?.length) {
+  if (checkpoint.curated?.length && checkpoint.rerank_pool_size === effectiveRerankLimit) {
     curated = checkpoint.curated;
     console.log("resuming saved OpenAI rerank", curated.length);
   } else {
@@ -1786,6 +1786,7 @@ async function main() {
       curated,
       openai_usage: openaiUsage,
       openai_response_id: openaiResponseId,
+      rerank_pool_size: effectiveRerankLimit,
       updated_at: new Date().toISOString()
     };
     await saveCheckpoint(genre, checkpoint);

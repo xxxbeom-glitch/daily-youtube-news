@@ -10,6 +10,8 @@ const OPENAI_MODEL = process.env.OPENAI_CURATOR_MODEL || "gpt-5.6-sol";
 const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
 const OPENAI_LOCATOR_MODEL = process.env.OPENAI_LOCATOR_MODEL || "gpt-5.6-luna";
 const OPENAI_WEB_LOCATOR = String(process.env.OPENAI_WEB_LOCATOR || "true").toLowerCase() === "true";
+const OPENAI_WEB_LOCATOR_MAX_CALLS = Math.max(1, Math.min(20, Number(process.env.OPENAI_WEB_LOCATOR_MAX_CALLS || 12)));
+const WEB_LOCATOR_VERSION = "youtube-locator-v2-single";
 const CATALOG_TARGET = Math.max(80, Math.min(140, Number(process.env.MUSIC_CATALOG_TARGET || 110)));
 const RERANK_LIMIT = Math.max(30, Math.min(55, Number(process.env.MUSIC_RERANK_LIMIT || 48)));
 const TEST_TRACK_LIMIT = Math.max(0, Math.min(20, Number(process.env.MUSIC_TEST_TRACK_LIMIT || 0)));
@@ -221,38 +223,42 @@ async function callOpenAICurator(profile, genre, candidates) {
   };
 }
 
-async function callOpenAIYouTubeLocator(candidates) {
-  if (!candidates.length) return { results: [], response_id: null, usage: null };
-
+async function callOpenAIYouTubeLocator(candidate) {
   const body = {
     model: OPENAI_LOCATOR_MODEL,
     store: false,
     instructions: [
-      "Find the exact YouTube watch URL for each supplied music recording.",
-      "Use web search. Return only URLs that resolve to the exact requested recording.",
-      "Prefer YouTube Art Tracks on '<Artist> - Topic' channels or an artist-owned 'Official Audio' upload.",
+      "You are locating exactly one YouTube music recording.",
+      "You MUST use web search before answering.",
+      "Search youtube.com for the exact requested artist, title and album.",
+      "Return only a direct YouTube watch URL for the exact recording.",
+      "Prefer an Art Track on an '<Artist> - Topic' channel or an artist-owned 'Official Audio' upload.",
       "Reject official music videos, VEVO music videos, lyric videos, visualizers, live performances, remasters, slowed/reverb/sped-up/nightcore, reactions and fan uploads.",
-      "If no trustworthy exact URL is found, return an empty youtube_url and low confidence.",
-      "Never substitute a different song, remix, clean edit or live version unless the candidate title itself explicitly asks for that version.",
-      "Return exactly one result per candidate_id."
+      "Do not substitute a different song, remix, clean edit or live version.",
+      "If no trustworthy exact URL is found after searching, return an empty youtube_url.",
+      "Return exactly one result with the supplied candidate_id."
     ].join("\n"),
     input: JSON.stringify({
-      candidates: candidates.map((t) => ({
-        candidate_id: t.candidate_id,
-        artist: t.display_artist,
-        title: t.title,
-        album: t.album,
-        release_year: t.release_year,
-        version_type: t.version_type
-      }))
+      candidate_id: candidate.candidate_id,
+      artist: candidate.display_artist,
+      title: candidate.title,
+      album: candidate.album,
+      release_year: candidate.release_year,
+      version_type: candidate.version_type,
+      suggested_search: '"' + candidate.display_artist + '" "' + candidate.title + '" "' + candidate.album + '" YouTube'
     }),
     reasoning: { effort: "none" },
-    tools: [{ type: "web_search" }],
-    max_output_tokens: 3000,
+    tools: [{
+      type: "web_search",
+      search_context_size: "low",
+      filters: { allowed_domains: ["youtube.com"] }
+    }],
+    tool_choice: "required",
+    max_output_tokens: 800,
     text: {
       format: {
         type: "json_schema",
-        name: "youtube_locator_v1",
+        name: "youtube_locator_v2",
         strict: true,
         schema: youtubeLocatorSchema
       }
@@ -276,8 +282,13 @@ async function callOpenAIYouTubeLocator(candidates) {
   const text = extractOutput(data);
   if (!text) throw new Error("OpenAI YouTube locator returned no structured output");
 
+  const parsed = JSON.parse(text);
   return {
-    ...JSON.parse(text),
+    result: parsed.results?.[0] || {
+      candidate_id: candidate.candidate_id,
+      youtube_url: "",
+      confidence: 0
+    },
     response_id: data.id || null,
     usage: data.usage || null
   };
@@ -1138,71 +1149,73 @@ function chooseOfficialAudio(t, videos) {
   return ranked[0] || null;
 }
 
-async function resolveViaOpenAIWeb(candidates, token, cache) {
-  const pending = candidates.filter((t) => {
-    const entry = cache.entries?.[trackKey(t)] || {};
-    return !entry.video_id && !entry.web_locator_checked_at;
-  });
-
-  if (!OPENAI_WEB_LOCATOR || !pending.length) {
-    return { resolved: [], attempted: 0, response_id: null, usage: null };
+async function resolveViaOpenAIWeb(candidates, token, cache, neededCount) {
+  if (!OPENAI_WEB_LOCATOR || neededCount <= 0) {
+    return { resolved: [], attempted: 0, response_ids: [], usage: [] };
   }
 
-  const locator = await callOpenAIYouTubeLocator(pending);
-  const byId = new Map((locator.results || []).map((r) => [r.candidate_id, r]));
-  const candidateIds = [];
-
-  for (const t of pending) {
-    const found = byId.get(t.candidate_id);
-    const videoId = found?.youtube_url ? youtubeIdFromUrl(found.youtube_url) : null;
-    if (videoId) candidateIds.push(videoId);
-  }
-
-  const details = candidateIds.length ? await getVideoDetails(token, candidateIds) : new Map();
   const resolved = [];
+  const responseIds = [];
+  const usage = [];
+  let attempted = 0;
 
-  for (const t of pending) {
+  for (const t of candidates) {
+    if (resolved.length >= neededCount || attempted >= OPENAI_WEB_LOCATOR_MAX_CALLS) break;
+
     const key = trackKey(t);
-    const found = byId.get(t.candidate_id);
+    const entry = cache.entries?.[key] || {};
+    if (entry.video_id) continue;
+    if (entry.web_locator_version === WEB_LOCATOR_VERSION && entry.web_locator_checked_at) continue;
+
+    const locator = await callOpenAIYouTubeLocator(t);
+    attempted += 1;
+    if (locator.response_id) responseIds.push(locator.response_id);
+    if (locator.usage) usage.push(locator.usage);
+
+    const found = locator.result;
     const videoId = found?.youtube_url ? youtubeIdFromUrl(found.youtube_url) : null;
+    const details = videoId ? await getVideoDetails(token, [videoId]) : new Map();
     const video = videoId ? details.get(videoId) : null;
     const match = video ? chooseOfficialAudio(t, [video]) : null;
 
     cache.entries ||= {};
     cache.entries[key] = {
       ...(cache.entries[key] || {}),
+      web_locator_version: WEB_LOCATOR_VERSION,
       web_locator_checked_at: new Date().toISOString(),
       web_locator_confidence: Number(found?.confidence || 0),
       web_locator_video_id: videoId || null
     };
 
-    if (!match) continue;
+    if (match) {
+      cache.entries[key] = {
+        ...cache.entries[key],
+        video_id: match.videoId,
+        audio_type: match.audioType,
+        resolution_source: "openai_web_locator",
+        title: match.title,
+        channel_title: match.channelTitle,
+        duration_seconds: match.durationSeconds,
+        verified_at: new Date().toISOString()
+      };
 
-    resolved.push({
-      ...t,
-      youtube: {
-        ...match,
-        resolutionSource: "openai_web_locator"
-      }
-    });
+      resolved.push({
+        ...t,
+        youtube: {
+          ...match,
+          resolutionSource: "openai_web_locator"
+        }
+      });
+    }
 
-    cache.entries[key] = {
-      ...cache.entries[key],
-      video_id: match.videoId,
-      audio_type: match.audioType,
-      resolution_source: "openai_web_locator",
-      title: match.title,
-      channel_title: match.channelTitle,
-      duration_seconds: match.durationSeconds,
-      verified_at: new Date().toISOString()
-    };
+    await writeJson(YOUTUBE_CACHE_PATH, cache);
   }
 
   return {
     resolved,
-    attempted: pending.length,
-    response_id: locator.response_id,
-    usage: locator.usage
+    attempted,
+    response_ids: responseIds,
+    usage
   };
 }
 
@@ -1318,9 +1331,12 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
 
   if (!optimized && OPENAI_WEB_LOCATOR) {
     const unresolved = candidates.filter((t) => !resolvedKeys.has(trackKey(t)));
-    const webResult = await resolveViaOpenAIWeb(unresolved, token, cache);
+    const neededCount = TEST_TRACK_LIMIT > 0
+      ? Math.max(0, TEST_TRACK_LIMIT - resolved.length)
+      : Math.max(0, 28 - resolved.length);
+    const webResult = await resolveViaOpenAIWeb(unresolved, token, cache, neededCount);
     webLocatorAttempts = webResult.attempted;
-    webLocatorResponseId = webResult.response_id;
+    webLocatorResponseId = webResult.response_ids;
     webLocatorUsage = webResult.usage;
 
     for (const item of webResult.resolved) {

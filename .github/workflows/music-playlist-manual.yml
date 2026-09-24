@@ -1,0 +1,116 @@
+name: Music discovery playlist
+
+on:
+  workflow_dispatch:
+    inputs:
+      genre:
+        description: Playlist lane to generate
+        required: true
+        type: choice
+        default: hiphop
+        options:
+          - hiphop
+          - rnb
+      create_playlist:
+        description: Create the private YouTube Music playlist after verification
+        required: true
+        type: boolean
+        default: true
+      playlist_title:
+        description: Optional temporary test title; blank uses a timestamped test title
+        required: false
+        type: string
+        default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - "music/**"
+      - ".github/workflows/music-playlist-manual.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate music profile and deterministic rules
+        run: node music/generate-playlist.mjs --self-test
+
+  generate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GENRE: ${{ inputs.genre }}
+      CREATE_PLAYLIST: ${{ inputs.create_playlist }}
+      PLAYLIST_TITLE: ${{ inputs.playlist_title }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_RESEARCH_MODEL: gpt-5.6-terra
+      OPENAI_CURATOR_MODEL: gpt-5.6-sol
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      MUSIC_PROFILE_PATH: music/profile.v1.json
+      MUSIC_STATE_PATH: .music-state/history.json
+      MUSIC_OUTPUT_DIR: music-output
+      MUSIC_RESEARCH_COUNT: "80"
+      MUSIC_RESOLVE_LIMIT: "40"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Restore prototype recommendation state
+        uses: actions/cache/restore@v4
+        with:
+          path: .music-state
+          key: music-state-${{ github.run_id }}
+          restore-keys: |
+            music-state-
+
+      - name: Preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in OPENAI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub Actions secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Add the missing values in GitHub repository Actions secrets before the first manual run."
+            exit 1
+          fi
+          node music/generate-playlist.mjs --self-test
+
+      - name: Generate and verify playlist
+        run: node music/generate-playlist.mjs
+
+      - name: Save prototype recommendation state
+        if: success() && inputs.create_playlist == true
+        uses: actions/cache/save@v4
+        with:
+          path: .music-state
+          key: music-state-${{ github.run_id }}
+
+      - name: Upload full audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-discovery-${{ inputs.genre }}-${{ github.run_id }}
+          path: |
+            music-output
+            .music-state/history.json
+          if-no-files-found: ignore
+          retention-days: 30

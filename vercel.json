@@ -8,9 +8,6 @@
   "functions": {
     "api/cron/daily-news.js": {
       "maxDuration": 60
-    },
-    "api/music-cover-test-4b6d1c2f.js": {
-      "maxDuration": 60
     }
   }
 }

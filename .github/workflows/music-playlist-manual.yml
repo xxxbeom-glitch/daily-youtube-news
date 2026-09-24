@@ -97,8 +97,8 @@ jobs:
       MUSIC_PROFILE_PATH: music/profile.v1.json
       MUSIC_STATE_PATH: .music-state/history.json
       MUSIC_OUTPUT_DIR: music-output
-      MUSIC_RESEARCH_COUNT: "80"
-      MUSIC_RESOLVE_LIMIT: "40"
+      MUSIC_RESEARCH_COUNT: "100"
+      MUSIC_RESOLVE_LIMIT: "45"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

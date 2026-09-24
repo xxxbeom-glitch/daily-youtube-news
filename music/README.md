@@ -81,3 +81,5 @@ For tagged 10-track QA runs, YouTube `search.list` is disabled; resolution uses 
 Failed QA runs upload a resolver audit so unresolved YouTube-ID paths can be inspected without consuming search quota.
 
 Per-track Luna lookup forces web search for unresolved exact YouTube watch URLs and stops after the test target is verified.
+
+Broad web lookup may use non-YouTube index pages only to discover the canonical YouTube watch URL; final acceptance still requires YouTube API video verification.

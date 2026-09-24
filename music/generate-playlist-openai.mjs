@@ -11,7 +11,7 @@ const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
 const OPENAI_LOCATOR_MODEL = process.env.OPENAI_LOCATOR_MODEL || "gpt-5.6-luna";
 const OPENAI_WEB_LOCATOR = String(process.env.OPENAI_WEB_LOCATOR || "true").toLowerCase() === "true";
 const OPENAI_WEB_LOCATOR_MAX_CALLS = Math.max(1, Math.min(20, Number(process.env.OPENAI_WEB_LOCATOR_MAX_CALLS || 12)));
-const WEB_LOCATOR_VERSION = "youtube-locator-v2-single";
+const WEB_LOCATOR_VERSION = "youtube-locator-v3-broad";
 const CATALOG_TARGET = Math.max(80, Math.min(140, Number(process.env.MUSIC_CATALOG_TARGET || 110)));
 const RERANK_LIMIT = Math.max(30, Math.min(55, Number(process.env.MUSIC_RERANK_LIMIT || 48)));
 const TEST_TRACK_LIMIT = Math.max(0, Math.min(20, Number(process.env.MUSIC_TEST_TRACK_LIMIT || 0)));
@@ -230,8 +230,9 @@ async function callOpenAIYouTubeLocator(candidate) {
     instructions: [
       "You are locating exactly one YouTube music recording.",
       "You MUST use web search before answering.",
-      "Search youtube.com for the exact requested artist, title and album.",
-      "Return only a direct YouTube watch URL for the exact recording.",
+      "Search the web for the exact requested artist, title and album. Do not limit yourself to YouTube-only search results because indexed music pages can reveal the canonical YouTube watch URL.",
+      "Try searches equivalent to: site:youtube.com/watch exact artist + exact title; exact artist + exact title + Topic; exact artist + exact title + 'Provided to YouTube by'.",
+      "Return only a direct youtube.com/watch or youtu.be URL for the exact recording.",
       "Prefer an Art Track on an '<Artist> - Topic' channel or an artist-owned 'Official Audio' upload.",
       "Reject official music videos, VEVO music videos, lyric videos, visualizers, live performances, remasters, slowed/reverb/sped-up/nightcore, reactions and fan uploads.",
       "Do not substitute a different song, remix, clean edit or live version.",
@@ -245,13 +246,16 @@ async function callOpenAIYouTubeLocator(candidate) {
       album: candidate.album,
       release_year: candidate.release_year,
       version_type: candidate.version_type,
-      suggested_search: '"' + candidate.display_artist + '" "' + candidate.title + '" "' + candidate.album + '" YouTube'
+      suggested_search_queries: [
+        'site:youtube.com/watch "' + candidate.display_artist + '" "' + candidate.title + '"',
+        '"' + candidate.display_artist + '" "' + candidate.title + '" Topic YouTube',
+        '"' + candidate.display_artist + '" "' + candidate.title + '" "Provided to YouTube by"'
+      ]
     }),
     reasoning: { effort: "none" },
     tools: [{
       type: "web_search",
-      search_context_size: "low",
-      filters: { allowed_domains: ["youtube.com"] }
+      search_context_size: "medium"
     }],
     tool_choice: "required",
     max_output_tokens: 800,

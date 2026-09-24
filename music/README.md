@@ -73,3 +73,5 @@ Required secrets for the active workflow:
 - `YOUTUBE_REFRESH_TOKEN`
 
 Manual runs default to `create_playlist=false` for dry-run QA. Enable playlist creation only after reviewing the audit output.
+
+Tagged push dry-runs use a 10-track test target.

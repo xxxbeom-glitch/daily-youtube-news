@@ -10,7 +10,8 @@ const OPENAI_MODEL = process.env.OPENAI_CURATOR_MODEL || "gpt-5.6-sol";
 const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
 const CATALOG_TARGET = Math.max(80, Math.min(140, Number(process.env.MUSIC_CATALOG_TARGET || 110)));
 const RERANK_LIMIT = Math.max(30, Math.min(55, Number(process.env.MUSIC_RERANK_LIMIT || 48)));
-const YOUTUBE_SEARCH_LIMIT = Math.max(20, Math.min(50, Number(process.env.YOUTUBE_SEARCH_LIMIT || 40)));
+const TEST_TRACK_LIMIT = Math.max(0, Math.min(20, Number(process.env.MUSIC_TEST_TRACK_LIMIT || 0)));
+const YOUTUBE_SEARCH_LIMIT = Math.max(10, Math.min(50, Number(process.env.YOUTUBE_SEARCH_LIMIT || 40)));
 const CHECKPOINT_MAX_AGE_MS = 2 * 86400000;
 const NEGATIVE_YOUTUBE_CACHE_MS = 7 * 86400000;
 const DAY = 86400000;
@@ -993,7 +994,7 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
     };
   }
 
-  let optimized = optimizeMaybe(resolved, profile);
+  let optimized = optimizeForRun(resolved, profile);
   let searches = 0;
   let quotaExhausted = false;
 
@@ -1028,7 +1029,7 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
       await writeJson(YOUTUBE_CACHE_PATH, cache);
       if (onProgress) await onProgress({ resolved, searches, quotaExhausted: false });
 
-      if (resolved.length >= 28) optimized = optimizeMaybe(resolved, profile);
+      if (resolved.length >= (TEST_TRACK_LIMIT || 28)) optimized = optimizeForRun(resolved, profile);
     } catch (error) {
       if (error?.isQuota) {
         quotaExhausted = true;
@@ -1052,7 +1053,7 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
   return {
     resolved,
     rejected,
-    optimized: optimized || optimizeMaybe(resolved, profile),
+    optimized: optimized || optimizeForRun(resolved, profile),
     searches,
     quotaExhausted
   };
@@ -1078,6 +1079,25 @@ function finalScore(t, profile, current, totalSeconds) {
   if (totalSeconds + t.youtube.durationSeconds > profile.playlist.max_duration_minutes * 60) score -= 1000;
 
   return score;
+}
+
+function optimizeTestMaybe(resolved, profile, limit) {
+  const ranked = [...resolved].sort((a, b) => curationScore(b) - curationScore(a));
+  const selected = balancedShortlist(ranked, profile, limit);
+  if (selected.length < limit) return null;
+
+  const seconds = selected.reduce((sum, t) => sum + t.youtube.durationSeconds, 0);
+  return {
+    selected,
+    total_seconds: seconds,
+    total_minutes: Number((seconds / 60).toFixed(1))
+  };
+}
+
+function optimizeForRun(resolved, profile) {
+  return TEST_TRACK_LIMIT > 0
+    ? optimizeTestMaybe(resolved, profile, TEST_TRACK_LIMIT)
+    : optimizeMaybe(resolved, profile);
 }
 
 function optimizeMaybe(resolved, profile) {
@@ -1181,7 +1201,8 @@ function kstStamp() {
 }
 
 function checkpointPath(genre) {
-  return path.join(path.dirname(STATE_PATH), "inflight-" + genre + "-openai-v3.json");
+  const suffix = TEST_TRACK_LIMIT > 0 ? "-test-" + TEST_TRACK_LIMIT : "";
+  return path.join(path.dirname(STATE_PATH), "inflight-" + genre + "-openai-v3" + suffix + ".json");
 }
 
 async function saveCheckpoint(genre, data) {
@@ -1355,7 +1376,8 @@ async function main() {
   }
 
   const deterministic = applyDeterministicScores(hard.kept, profile, genre);
-  const rerankPool = selectRerankPool(deterministic, profile, RERANK_LIMIT);
+  const effectiveRerankLimit = TEST_TRACK_LIMIT > 0 ? Math.max(20, TEST_TRACK_LIMIT + 10) : RERANK_LIMIT;
+  const rerankPool = selectRerankPool(deterministic, profile, effectiveRerankLimit);
 
   let curated;
   let openaiUsage = checkpoint.openai_usage || null;
@@ -1372,7 +1394,8 @@ async function main() {
     openaiResponseId = rerank.response_id;
 
     curated = mergeCuration(rerankPool, rerank.parsed.results || [], genre);
-    if (curated.length < 30) {
+    const minimumCurated = TEST_TRACK_LIMIT > 0 ? TEST_TRACK_LIMIT : 30;
+    if (curated.length < minimumCurated) {
       throw new Error("Only " + curated.length + " candidates survived OpenAI rerank");
     }
 
@@ -1387,7 +1410,7 @@ async function main() {
     await saveCheckpoint(genre, checkpoint);
   }
 
-  const shortlist = balancedShortlist(curated, profile, Math.min(RERANK_LIMIT, curated.length));
+  const shortlist = balancedShortlist(curated, profile, Math.min(effectiveRerankLimit, curated.length));
   const token = await googleToken();
 
   const resolution = await resolveYouTubePool(
@@ -1429,8 +1452,13 @@ async function main() {
       ? " YouTube search quota was exhausted; checkpoint saved for resume."
       : " Checkpoint saved for resume.";
 
+    const targetDescription = TEST_TRACK_LIMIT > 0
+      ? TEST_TRACK_LIMIT + " verified tracks"
+      : "120 minutes";
     throw new Error(
-      "Verified pool could not satisfy 120 minutes. Verified raw duration " +
+      "Verified pool could not satisfy " +
+      targetDescription +
+      ". Verified raw duration " +
       possibleMinutes.toFixed(1) +
       " min after " +
       resolution.searches +
@@ -1481,6 +1509,7 @@ async function main() {
     prompt_version: PROMPT_VERSION,
     model: OPENAI_MODEL,
     reasoning_effort: OPENAI_REASONING_EFFORT,
+    test_track_limit: TEST_TRACK_LIMIT,
     openai_calls: openaiCalls,
     openai_response_id: openaiResponseId,
     openai_usage: openaiUsage,

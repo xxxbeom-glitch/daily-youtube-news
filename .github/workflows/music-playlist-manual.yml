@@ -42,20 +42,25 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
+      GEMINI_CURATOR_MODEL: gemini-3.6-flash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Validate music profile and deterministic rules
-        run: node music/generate-playlist.mjs --self-test
+      - name: Validate Gemini music engine
+        run: node music/generate-playlist-gemini.mjs --self-test
 
   credential_preflight:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
+      GEMINI_CURATOR_MODEL: gemini-3.6-flash
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -64,12 +69,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Verify GitHub Actions secrets and credentials
+      - name: Verify Gemini and YouTube credentials
         shell: bash
         run: |
           set -euo pipefail
           missing=0
-          for name in OPENAI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
+          for name in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub Actions secret: $name"
               missing=1
@@ -78,35 +83,36 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          node music/generate-playlist.mjs --credential-test
+          node music/generate-playlist-gemini.mjs --credential-test
 
   generate:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[music-hiphop-once]'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[music-gemini-once]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GENRE: ${{ github.event_name == 'workflow_dispatch' && inputs.genre || 'hiphop' }}
       CREATE_PLAYLIST: ${{ github.event_name == 'workflow_dispatch' && inputs.create_playlist || 'true' }}
       PLAYLIST_TITLE: ${{ github.event_name == 'workflow_dispatch' && inputs.playlist_title || '' }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_RESEARCH_MODEL: gpt-5.6-terra
-      OPENAI_CURATOR_MODEL: gpt-5.6-sol
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
+      GEMINI_CURATOR_MODEL: gemini-3.6-flash
+      MAX_GEMINI_CALLS_PER_RUN: "5"
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       MUSIC_PROFILE_PATH: music/profile.v1.json
       MUSIC_STATE_PATH: .music-state/history.json
       MUSIC_OUTPUT_DIR: music-output
-      MUSIC_RESEARCH_COUNT: "100"
-      MUSIC_RESOLVE_LIMIT: "60"
-      YOUTUBE_SEARCH_FALLBACK_LIMIT: "0"
+      MUSIC_CATALOG_TARGET: "140"
+      MUSIC_CURATOR_LIMIT: "50"
+      YOUTUBE_SEARCH_LIMIT: "60"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Restore prototype recommendation state
+      - name: Restore recommendation and resume state
         uses: actions/cache/restore@v4
         with:
           path: .music-state
@@ -119,35 +125,32 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in OPENAI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
+          for name in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub Actions secret: $name"
               missing=1
             fi
           done
           if [ "$missing" -ne 0 ]; then
-            echo "Add the missing values in GitHub repository Actions secrets before the first manual run."
             exit 1
           fi
-          node music/generate-playlist.mjs --self-test
+          node music/generate-playlist-gemini.mjs --self-test
 
       - name: Generate and verify playlist
-        run: node music/generate-playlist.mjs
+        run: node music/generate-playlist-gemini.mjs
 
-      - name: Save prototype recommendation state
-        if: success() && (github.event_name == 'push' || inputs.create_playlist == true)
+      - name: Save recommendation and resume state
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: .music-state
           key: music-state-${{ github.run_id }}
 
-      - name: Upload full audit artifact
+      - name: Upload audit artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: music-discovery-${{ env.GENRE }}-${{ github.run_id }}
-          path: |
-            music-output
-            .music-state/history.json
+          path: music-output
           if-no-files-found: ignore
           retention-days: 30

@@ -83,3 +83,5 @@ Failed QA runs upload a resolver audit so unresolved YouTube-ID paths can be ins
 Per-track Luna lookup forces web search for unresolved exact YouTube watch URLs and stops after the test target is verified.
 
 Broad web lookup may use non-YouTube index pages only to discover the canonical YouTube watch URL; final acceptance still requires YouTube API video verification.
+
+Ten-track QA expands the subjective rerank pool to 45 candidates so official-audio availability does not bottleneck the final test set.

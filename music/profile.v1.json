@@ -1,0 +1,149 @@
+{
+  "version": "1.0.0",
+  "purpose": "personal discovery playlists",
+  "playlist": {
+    "min_duration_minutes": 120,
+    "max_duration_minutes": 130,
+    "famous_artist_share": 0.30,
+    "less_known_artist_share": 0.70,
+    "max_tracks_per_primary_artist": 2,
+    "max_tracks_per_album": 1,
+    "cross_playlist_duplicate_tracks": false,
+    "cooldown_days": 90,
+    "explicit_allowed": true,
+    "official_audio_only": true,
+    "accepted_release_types": ["album", "ep", "mixtape"],
+    "rejected_content_types": [
+      "music_video",
+      "vevo_music_video",
+      "lyric_video",
+      "visualizer",
+      "live",
+      "compilation",
+      "remaster",
+      "slowed",
+      "reverb",
+      "sped_up",
+      "nightcore",
+      "unofficial_remix",
+      "fan_upload"
+    ]
+  },
+  "versions": {
+    "official_feature_remix_is_distinct_track": true,
+    "official_remix_requires_material_new_content": true,
+    "same_recording_edits_share_identity": ["clean", "radio_edit"]
+  },
+  "scene": {
+    "include": "artists primarily identified with the U.S. or North American hip-hop/R&B market",
+    "exclude": "primary/main artists primarily identified with the Korean/K-pop music industry, regardless of language, label, release country, or U.S. charting",
+    "ethnicity_is_not_a_filter": true
+  },
+  "era_mix": [
+    {"bucket": "recent_12_months", "share": 0.08},
+    {"bucket": "one_to_five_years", "share": 0.27},
+    {"bucket": "six_to_ten_years", "share": 0.35},
+    {"bucket": "older_than_ten_years", "share": 0.30}
+  ],
+  "hiphop": {
+    "minimum_release_year": 2010,
+    "positive": [
+      "strong drums",
+      "thick bass",
+      "addictive rhythm",
+      "swagger and energy",
+      "dark, hard or aggressive production",
+      "bright tracks are allowed when the beat hits hard and bounce is strong",
+      "Southern and Atlanta trap",
+      "club rap",
+      "drill",
+      "modern boom-bap",
+      "hard mainstream rap"
+    ],
+    "negative": [
+      "rage",
+      "hyperpop",
+      "EDM or electronic-first rap",
+      "glitchy or futuristic electronic production as the dominant aesthetic",
+      "classic 1990s old-school rap",
+      "G-funk",
+      "ancestral 1990s boom-bap feel",
+      "overly soft or light pop-rap"
+    ]
+  },
+  "rnb": {
+    "minimum_release_year": null,
+    "positive": [
+      "R&B vocals over hip-hop drums and bass",
+      "trap-soul",
+      "alternative R&B",
+      "contemporary R&B",
+      "hip-hop soul",
+      "groovy",
+      "sensual and sticky",
+      "dark or moody",
+      "rhythmic",
+      "fresh or experimental production",
+      "1990s and 2000s rhythmic R&B and pop-R&B feel",
+      "rap features are welcome"
+    ],
+    "negative": [
+      "very slow ballads",
+      "acoustic-heavy arrangements",
+      "very jazzy or neo-soul-dominant direction",
+      "overly soft background R&B",
+      "bland production"
+    ]
+  },
+  "favorite_artists": [
+    "SZA",
+    "The Weeknd",
+    "Doechii",
+    "Victoria Monét",
+    "Bryson Tiller",
+    "Young Thug",
+    "Frank Ocean",
+    "Drake",
+    "Eminem"
+  ],
+  "seed_tracks": {
+    "hiphop": [
+      {"artist": "Young Thug", "title": "With Them"},
+      {"artist": "Young Stoner Life / Young Thug / Gunna", "title": "Ski"},
+      {"artist": "Tyga", "title": "Lift Me Up"},
+      {"artist": "YFN Lucci", "title": "Piece on My Neck"},
+      {"artist": "Big Boss Vette", "title": "Pretty Girl Walk"},
+      {"artist": "Chris Brown & Tyga", "title": "Ayo"},
+      {"artist": "City Girls", "title": "Act Up"},
+      {"artist": "Roddy Ricch", "title": "The Box"},
+      {"artist": "Kanye West", "title": "Mercy"}
+    ],
+    "rnb": [
+      {"artist": "SZA", "title": "Kill Bill"},
+      {"artist": "SZA", "title": "Seek & Destroy"},
+      {"artist": "THEY.", "title": "Play Fight"},
+      {"artist": "Destiny's Child", "title": "Survivor"},
+      {"artist": "Destiny's Child", "title": "Bills, Bills, Bills"},
+      {"artist": "Summer Walker", "title": "Come Thru"},
+      {"artist": "Usher", "title": "My Boo"}
+    ],
+    "production_only": [
+      {"artist": "Billie Eilish", "title": "my boy"},
+      {"artist": "Billie Eilish", "title": "COPYCAT"}
+    ]
+  },
+  "secondary_snapshot_signals": [
+    "modern hip-hop preference is strong",
+    "trap and rap discovery should be prominent",
+    "hidden gems and deep cuts are desirable",
+    "R&B remains a strong secondary lane"
+  ],
+  "selection_policy": {
+    "seed_tracks_are_signals_not_playlist_items": true,
+    "avoid_album_title_tracks": true,
+    "avoid_pre_release_singles": true,
+    "avoid_representative_singles_and_mega_hits": true,
+    "prefer_deep_cuts_and_lower_to_mid_popularity": true,
+    "do_not_fill_quota_by_breaking_hard_rules": true
+  }
+}

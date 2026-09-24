@@ -97,7 +97,7 @@ async function resolveYouTube(t, token) {
   const q=`${t.display_artist} ${t.title} ${t.version_type === "official_remix" ? "remix" : ""} official audio`;
   const s=await ytGet("search",token,{part:"snippet",q,type:"video",videoCategoryId:10,maxResults:7}); const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean); if(!ids.length)return null;
   const d=await ytGet("videos",token,{part:"snippet,contentDetails,statistics,status",id:ids.join(",")});
-  const ranked=[]; for(const item of d.items||[]){const v={videoId:item.id,title:item.snippet?.title||"",description:item.snippet?.description||"",channelTitle:item.snippet?.channelTitle||"",durationSeconds:isoSeconds(item.contentDetails?.duration),publishedAt:item.snippet?.publishedAt||"",viewCount:Number(item.statistics?.viewCount||0)}; const c=classifyOfficialAudio(t,v); if(c.ok)ranked.push({...v,audioType:c.type});}
+  const ranked=[]; for(const item of d.items||[]){const v={videoId:item.id,title:item.snippet?.title||"",description:item.snippet?.description||"",channelTitle:item.snippet?.channelTitle||"",durationSeconds:isoSeconds(item.contentDetails?.duration),publishedAt:item.snippet?.publishedAt||"",viewCount:Number(item.statistics?.viewCount||0)}; if(!Number.isFinite(v.durationSeconds)||v.durationSeconds<60||v.durationSeconds>720)continue; const c=classifyOfficialAudio(t,v); if(c.ok)ranked.push({...v,audioType:c.type});}
   ranked.sort((a,b)=>(a.audioType==="art_track"?-1:0)-(b.audioType==="art_track"?-1:0)||a.viewCount-b.viewCount); return ranked[0]||null;
 }
 async function createPlaylist(token,title,description){return ytPost("playlists",token,{part:"snippet,status"},{snippet:{title,description},status:{privacyStatus:"private"}});}

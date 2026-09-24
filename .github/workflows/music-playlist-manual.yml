@@ -81,13 +81,13 @@ jobs:
           node music/generate-playlist.mjs --credential-test
 
   generate:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[music-hiphop-once]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      GENRE: ${{ inputs.genre }}
-      CREATE_PLAYLIST: ${{ inputs.create_playlist }}
-      PLAYLIST_TITLE: ${{ inputs.playlist_title }}
+      GENRE: ${{ github.event_name == 'workflow_dispatch' && inputs.genre || 'hiphop' }}
+      CREATE_PLAYLIST: ${{ github.event_name == 'workflow_dispatch' && inputs.create_playlist || 'true' }}
+      PLAYLIST_TITLE: ${{ github.event_name == 'workflow_dispatch' && inputs.playlist_title || '' }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_RESEARCH_MODEL: gpt-5.6-terra
       OPENAI_CURATOR_MODEL: gpt-5.6-sol
@@ -134,7 +134,7 @@ jobs:
         run: node music/generate-playlist.mjs
 
       - name: Save prototype recommendation state
-        if: success() && inputs.create_playlist == true
+        if: success() && (github.event_name == 'push' || inputs.create_playlist == true)
         uses: actions/cache/save@v4
         with:
           path: .music-state
@@ -144,7 +144,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: music-discovery-${{ inputs.genre }}-${{ github.run_id }}
+          name: music-discovery-${{ env.GENRE }}-${{ github.run_id }}
           path: |
             music-output
             .music-state/history.json

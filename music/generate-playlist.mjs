@@ -68,18 +68,89 @@ function hardFilter(candidates, profile, genre, state) {
 
 async function researchCandidates(profile, genre) {
   const lane = genre === "hiphop" ? profile.hiphop : profile.rnb;
-  const instructions = `Research real released ${genre === "hiphop" ? "hip-hop" : "R&B"} tracks for one user's discovery playlist. Use web search. Metadata is FACT and must not be invented. Return about ${RESEARCH_COUNT} diverse candidates from formal albums, EPs or mixtapes. Favor album/deep cuts, lower-to-mid popularity and underheard tracks; include famous-artist deep cuts too. Primary artists must belong primarily to the U.S./North-American hip-hop/R&B market; exclude K-pop/Korean-industry primary artists. Seed tracks are taste signals only, not recommendations. Official remixes with added verses/features are allowed and distinct from originals. Avoid obvious representative singles/mega-hits, title tracks, pre-release singles, compilations, remasters and novelty edits. Every candidate must include at least one evidence URL supporting track existence/release metadata. Aim for about ${Math.round(profile.playlist.famous_artist_share * 100)}% famous-artist deep cuts and ${Math.round(profile.playlist.less_known_artist_share * 100)}% mid/less-known artists. Target era mix: ${profile.era_mix.map((x) => `${x.bucket}=${Math.round(x.share * 100)}%`).join(", ")}. Taste target: ${lane.positive.join("; ")}. Avoid: ${lane.negative.join("; ")}.`;
-  return callOpenAI({model:RESEARCH_MODEL,instructions,input:{profile_version:profile.version,genre,favorite_artists:profile.favorite_artists,seeds:profile.seed_tracks[genre],production_only_seeds:profile.seed_tracks.production_only,secondary_signals:profile.secondary_snapshot_signals},schemaName:"music_candidates_v1",schema:candidateSchema,webSearch:true,effort:"medium",max:18000});
+  const batchCount = RESEARCH_COUNT >= 90 ? 3 : 2;
+  const batchSize = Math.ceil(RESEARCH_COUNT / batchCount);
+  const perspectives = [
+    "album and mixtape deep cuts from established and mid-tier artists; emphasize hard drums, bass and strong rhythmic identity",
+    "less-known artists, collaborator/feature neighborhoods and underheard catalog tracks; maximize artist diversity",
+    "era-balancing pass that fills gaps across the requested age buckets while staying away from obvious singles and mega-hits",
+  ];
+  const merged = [];
+  const seen = new Set();
+  const responseIds = [];
+  const usages = [];
+
+  for (let batchIndex = 0; batchIndex < batchCount; batchIndex += 1) {
+    const instructions = `Research real released ${genre === "hiphop" ? "hip-hop" : "R&B"} tracks for one user's discovery playlist. Use web search. Metadata is FACT and must not be invented. Return about ${batchSize} diverse candidates from formal albums, EPs or mixtapes. This batch focus is: ${perspectives[batchIndex]}. Favor album/deep cuts, lower-to-mid popularity and underheard tracks; include famous-artist deep cuts too. Primary artists must belong primarily to the U.S./North-American hip-hop/R&B market; exclude K-pop/Korean-industry primary artists. Seed tracks are taste signals only, not recommendations. Official remixes with added verses/features are allowed and distinct from originals. Avoid obvious representative singles/mega-hits, title tracks, pre-release singles, compilations, remasters and novelty edits. Every candidate must include at least one evidence URL supporting track existence/release metadata. Aim across the total pool for about ${Math.round(profile.playlist.famous_artist_share * 100)}% famous-artist deep cuts and ${Math.round(profile.playlist.less_known_artist_share * 100)}% mid/less-known artists. Target era mix: ${profile.era_mix.map((x) => `${x.bucket}=${Math.round(x.share * 100)}%`).join(", ")}. Do not repeat any track listed in avoid_tracks. Taste target: ${lane.positive.join("; ")}. Avoid: ${lane.negative.join("; ")}.`;
+
+    const batch = await callOpenAI({
+      model: RESEARCH_MODEL,
+      instructions,
+      input: {
+        profile_version: profile.version,
+        genre,
+        batch_index: batchIndex + 1,
+        batch_count: batchCount,
+        favorite_artists: profile.favorite_artists,
+        seeds: profile.seed_tracks[genre],
+        production_only_seeds: profile.seed_tracks.production_only,
+        secondary_signals: profile.secondary_snapshot_signals,
+        avoid_tracks: merged.map((t) => ({ artist: t.display_artist, title: t.title, version_type: t.version_type })).slice(-80),
+      },
+      schemaName: "music_candidates_v1",
+      schema: candidateSchema,
+      webSearch: true,
+      effort: "medium",
+      max: 12000,
+    });
+
+    responseIds.push(batch.response_id);
+    usages.push(batch.usage);
+    for (const candidate of batch.parsed.candidates || []) {
+      const key = trackKey(candidate);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(candidate);
+    }
+  }
+
+  return {
+    parsed: { candidates: merged.slice(0, RESEARCH_COUNT) },
+    response_id: responseIds,
+    usage: usages,
+  };
 }
 async function curate(profile, genre, candidates) {
   const lane = genre === "hiphop" ? profile.hiphop : profile.rnb;
-  const instructions = `Act only as a subjective music curator. Do NOT invent or correct factual metadata and do not claim you listened to audio. Score supplied real candidates from known musical knowledge and supplied metadata. The user's strongest signals are the explicit seed tracks, favorite artists, positive/negative traits. Prefer discoveries over obvious hits. For hip-hop, strongly reject rage/hyperpop/electronic-first aesthetics. For R&B, require a meaningful hip-hop rhythmic/production base and avoid sleepy ballad/acoustic/neo-soul-dominant material. A bright song can fit hip-hop if drums, bass and bounce hit hard. Return one result for every candidate_id. Positive: ${lane.positive.join("; ")}. Negative: ${lane.negative.join("; ")}.`;
-  return callOpenAI({model:CURATOR_MODEL,instructions,input:{genre,seeds:profile.seed_tracks[genre],favorites:profile.favorite_artists,candidates},schemaName:"music_curation_v1",schema:curatorSchema,effort:"high",max:18000});
+  const instructions = `Act only as a subjective music curator. Do NOT invent or correct factual metadata and do not claim you listened to audio. Score supplied real candidates from known musical knowledge and supplied metadata. The user's strongest signals are the explicit seed tracks, favorite artists, positive/negative traits. Prefer discoveries over obvious hits. For hip-hop, strongly reject rage/hyperpop/electronic-first aesthetics. For R&B, require a meaningful hip-hop rhythmic/production base and avoid sleepy ballad/acoustic/neo-soul-dominant material. A bright song can fit hip-hop if drums, bass and bounce hit hard. Return one result for every candidate_id supplied in this batch. Positive: ${lane.positive.join("; ")}. Negative: ${lane.negative.join("; ")}.`;
+  const chunkSize = 35;
+  const results = [];
+  const responseIds = [];
+  const usages = [];
+
+  for (let i = 0; i < candidates.length; i += chunkSize) {
+    const chunk = candidates.slice(i, i + chunkSize);
+    const batch = await callOpenAI({
+      model: CURATOR_MODEL,
+      instructions,
+      input: { genre, seeds: profile.seed_tracks[genre], favorites: profile.favorite_artists, candidates: chunk },
+      schemaName: "music_curation_v1",
+      schema: curatorSchema,
+      effort: "high",
+      max: 10000,
+    });
+    responseIds.push(batch.response_id);
+    usages.push(batch.usage);
+    results.push(...(batch.parsed.results || []));
+  }
+
+  return { parsed: { results }, response_id: responseIds, usage: usages };
 }
 
 async function googleToken() { const body=new URLSearchParams({client_id:requiredEnv("GOOGLE_CLIENT_ID"),client_secret:requiredEnv("GOOGLE_CLIENT_SECRET"),refresh_token:requiredEnv("YOUTUBE_REFRESH_TOKEN"),grant_type:"refresh_token"}); const r=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body}); if(!r.ok) throw new Error(`Google token refresh failed (${r.status}): ${(await r.text()).slice(0,500)}`); const d=await r.json(); return d.access_token; }
 async function ytGet(pathname, token, params={}) { const u=new URL(`${YT}/${pathname}`); for(const[k,v]of Object.entries(params)) if(v!==undefined&&v!==null&&v!=="")u.searchParams.set(k,String(v)); const r=await fetch(u,{headers:{authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error(`YouTube GET ${pathname} failed (${r.status}): ${(await r.text()).slice(0,700)}`); return r.json(); }
 async function ytPost(pathname, token, params, body) { const u=new URL(`${YT}/${pathname}`); for(const[k,v]of Object.entries(params||{}))u.searchParams.set(k,String(v)); const r=await fetch(u,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`YouTube POST ${pathname} failed (${r.status}): ${(await r.text()).slice(0,700)}`); return r.json(); }
+async function ytDelete(pathname, token, params={}) { const u=new URL(`${YT}/${pathname}`); for(const[k,v]of Object.entries(params)) if(v!==undefined&&v!==null&&v!=="")u.searchParams.set(k,String(v)); const r=await fetch(u,{method:"DELETE",headers:{authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error(`YouTube DELETE ${pathname} failed (${r.status}): ${(await r.text()).slice(0,700)}`); }
 function isoSeconds(v="") { const m=v.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/); return m?Number(m[1]||0)*86400+Number(m[2]||0)*3600+Number(m[3]||0)*60+Number(m[4]||0):null; }
 function artistMatch(t, text) { const n=norm(text); return (t.primary_artists||[t.display_artist]).some((a)=>{const x=norm(a);return x && (n.includes(x)||x.split(" ").filter(Boolean).every((p)=>n.includes(p)));}); }
 function classifyOfficialAudio(t, v) {
@@ -94,13 +165,14 @@ function classifyOfficialAudio(t, v) {
   return {ok:false,reason:"not_verified_official_audio"};
 }
 async function resolveYouTube(t, token) {
-  const q=`${t.display_artist} ${t.title} ${t.version_type === "official_remix" ? "remix" : ""} official audio`;
-  const s=await ytGet("search",token,{part:"snippet",q,type:"video",videoCategoryId:10,maxResults:7}); const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean); if(!ids.length)return null;
+  const q=`${t.display_artist} ${t.title} ${t.version_type === "official_remix" ? "remix" : ""}`;
+  const s=await ytGet("search",token,{part:"snippet",q,type:"video",videoCategoryId:10,maxResults:15}); const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean); if(!ids.length)return null;
   const d=await ytGet("videos",token,{part:"snippet,contentDetails,statistics,status",id:ids.join(",")});
   const ranked=[]; for(const item of d.items||[]){const v={videoId:item.id,title:item.snippet?.title||"",description:item.snippet?.description||"",channelTitle:item.snippet?.channelTitle||"",durationSeconds:isoSeconds(item.contentDetails?.duration),publishedAt:item.snippet?.publishedAt||"",viewCount:Number(item.statistics?.viewCount||0)}; if(!Number.isFinite(v.durationSeconds)||v.durationSeconds<60||v.durationSeconds>720)continue; const c=classifyOfficialAudio(t,v); if(c.ok)ranked.push({...v,audioType:c.type});}
   ranked.sort((a,b)=>(a.audioType==="art_track"?-1:0)-(b.audioType==="art_track"?-1:0)||a.viewCount-b.viewCount); return ranked[0]||null;
 }
 async function createPlaylist(token,title,description){return ytPost("playlists",token,{part:"snippet,status"},{snippet:{title,description},status:{privacyStatus:"private"}});}
+async function deletePlaylist(token,playlistId){return ytDelete("playlists",token,{id:playlistId});}
 async function addVideo(token,playlistId,videoId){for(let i=0;i<3;i++){try{return await ytPost("playlistItems",token,{part:"snippet"},{snippet:{playlistId,resourceId:{kind:"youtube#video",videoId}}});}catch(e){if(i===2)throw e;await sleep(1200*(i+1));}}}
 
 function mergeCuration(candidates, results, genre) { const by=new Map(results.map(r=>[r.candidate_id,r])); return candidates.map(t=>({...t,curation:by.get(t.candidate_id)})).filter(x=>x.curation&&!x.curation.reject).filter(x=>genre!=="hiphop"||x.curation.traits.rage_risk<55).filter(x=>genre!=="hiphop"||x.curation.traits.electronic_risk<60).filter(x=>genre!=="rnb"||x.curation.traits.hiphop_base>=45).sort((a,b)=>(b.curation.taste_score+b.curation.deep_cut_score*.35+b.curation.confidence*.15)-(a.curation.taste_score+a.curation.deep_cut_score*.35+a.curation.confidence*.15)); }
@@ -127,8 +199,27 @@ async function main(){if(process.argv.includes("--credential-test")){await crede
   const research=await researchCandidates(profile,genre);audit.research={response_id:research.response_id,usage:research.usage,count:research.parsed.candidates.length};const filtered=hardFilter(research.parsed.candidates,profile,genre,state);audit.hard_rejected=filtered.rejected;if(filtered.kept.length<30)throw new Error(`Only ${filtered.kept.length} candidates survived hard filters; refusing low-quality generation.`);
   const cur=await curate(profile,genre,filtered.kept);audit.curation={response_id:cur.response_id,usage:cur.usage};const scored=mergeCuration(filtered.kept,cur.parsed.results,genre);const shortlist=balancedShortlist(scored,profile,RESOLVE_LIMIT);audit.shortlist_count=shortlist.length;
   const token=await googleToken();const resolved=[],resolutionRejected=[];for(const t of shortlist){const y=await resolveYouTube(t,token);if(y)resolved.push({...t,youtube:y});else resolutionRejected.push({candidate_id:t.candidate_id,artist:t.display_artist,title:t.title});}audit.youtube_rejected=resolutionRejected;audit.verified_count=resolved.length;
-  const optimized=optimize(resolved,profile);const create=String(process.env.CREATE_PLAYLIST||"true").toLowerCase()==="true";let playlist=null;let title=process.env.PLAYLIST_TITLE?.trim();if(!title)title=`Discovery Test - ${genre==="hiphop"?"Hip-Hop":"R&B"} - ${kstStamp()}`;
-  if(create){playlist=await createPlaylist(token,title,`Manual discovery test | profile ${profile.version} | ${RULES_VERSION} | no automatic updates`);await sleep(1200);for(const t of optimized.selected)await addVideo(token,playlist.id,t.youtube.videoId);}
+  console.log("music pipeline counts", { researched: research.parsed.candidates.length, hardKept: filtered.kept.length, scored: scored.length, shortlist: shortlist.length, verified: resolved.length, youtubeRejected: resolutionRejected.length });
+  let optimized;
+  try {
+    optimized=optimize(resolved,profile);
+  } catch (error) {
+    await fs.mkdir(OUTPUT_DIR,{recursive:true});
+    const failurePath=path.join(OUTPUT_DIR,`${genre}-failed-${Date.now()}.json`);
+    await writeJson(failurePath,{...audit,failed_at:new Date().toISOString(),error:error instanceof Error?error.message:String(error)});
+    throw error;
+  }
+  const create=String(process.env.CREATE_PLAYLIST||"true").toLowerCase()==="true";let playlist=null;let title=process.env.PLAYLIST_TITLE?.trim();if(!title)title=`Discovery Test - ${genre==="hiphop"?"Hip-Hop":"R&B"} - ${kstStamp()}`;
+  if(create){
+    playlist=await createPlaylist(token,title,`Manual discovery test | profile ${profile.version} | ${RULES_VERSION} | no automatic updates`);
+    await sleep(1200);
+    try {
+      for(const t of optimized.selected) await addVideo(token,playlist.id,t.youtube.videoId);
+    } catch (error) {
+      try { await deletePlaylist(token,playlist.id); } catch (rollbackError) { console.error("playlist rollback failed", rollbackError instanceof Error?rollbackError.message:rollbackError); }
+      throw error;
+    }
+  }
   const run={...audit,finished_at:new Date().toISOString(),playlist_id:playlist?.id||null,playlist_url:playlist?`https://music.youtube.com/playlist?list=${playlist.id}`:null,playlist_title:title,total_seconds:optimized.total_seconds,total_minutes:optimized.total_minutes,selected:optimized.selected};await fs.mkdir(OUTPUT_DIR,{recursive:true});const outPath=path.join(OUTPUT_DIR,`${genre}-${Date.now()}.json`);await writeJson(outPath,run);
   if(create){state.recommended ||= [];for(const t of optimized.selected)state.recommended.push({track_key:trackKey(t),recommended_at:run.finished_at,genre,playlist_id:playlist.id,artist:t.display_artist,title:t.title,album:t.album,version_type:t.version_type,video_id:t.youtube.videoId,model:CURATOR_MODEL,profile_version:profile.version,rules_version:RULES_VERSION,prompt_version:PROMPT_VERSION,traits:t.curation.traits,taste_score:t.curation.taste_score});await writeJson(STATE_PATH,state);} await summary(run);console.log(JSON.stringify({ok:true,genre,playlistUrl:run.playlist_url,totalMinutes:run.total_minutes,tracks:run.selected.length,audit:outPath},null,2));}
 

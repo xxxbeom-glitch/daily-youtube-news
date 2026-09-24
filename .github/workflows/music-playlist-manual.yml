@@ -105,9 +105,10 @@ jobs:
       MUSIC_STATE_PATH: .music-state/history.json
       MUSIC_YOUTUBE_CACHE_PATH: .music-state/youtube-cache.json
       MUSIC_OUTPUT_DIR: music-output
-      MUSIC_CATALOG_TARGET: "110"
+      MUSIC_CATALOG_TARGET: ${{ github.event_name == 'push' && '80' || '110' }}
       MUSIC_RERANK_LIMIT: "48"
-      YOUTUBE_SEARCH_LIMIT: "40"
+      MUSIC_TEST_TRACK_LIMIT: ${{ github.event_name == 'push' && '10' || '0' }}
+      YOUTUBE_SEARCH_LIMIT: ${{ github.event_name == 'push' && '15' || '40' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

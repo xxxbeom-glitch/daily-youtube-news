@@ -15,7 +15,7 @@ on:
         description: Create the private YouTube Music playlist after verification
         required: true
         type: boolean
-        default: true
+        default: false
       playlist_title:
         description: Optional temporary test title; blank uses a timestamped test title
         required: false
@@ -43,24 +43,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
-      GEMINI_CURATOR_MODEL: gemini-3.6-flash
+      OPENAI_CURATOR_MODEL: gpt-5.6-sol
+      OPENAI_REASONING_EFFORT: low
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      - name: Validate Gemini music engine
-        run: node music/generate-playlist-gemini.mjs --self-test
+          node-version: "24"
+      - name: Validate OpenAI music engine
+        run: node music/generate-playlist-openai.mjs --self-test
 
   credential_preflight:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
-      GEMINI_CURATOR_MODEL: gemini-3.6-flash
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CURATOR_MODEL: gpt-5.6-sol
+      OPENAI_REASONING_EFFORT: low
+      LISTENBRAINZ_TOKEN: ${{ secrets.LISTENBRAINZ_TOKEN }}
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -68,13 +69,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      - name: Verify Gemini and YouTube credentials
+          node-version: "24"
+      - name: Verify OpenAI, ListenBrainz and YouTube credentials
         shell: bash
         run: |
           set -euo pipefail
           missing=0
-          for name in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
+          for name in OPENAI_API_KEY LISTENBRAINZ_TOKEN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub Actions secret: $name"
               missing=1
@@ -83,36 +84,37 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          node music/generate-playlist-gemini.mjs --credential-test
+          node music/generate-playlist-openai.mjs --credential-test
 
   generate:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[music-gemini-once]'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[music-openai-once]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GENRE: ${{ github.event_name == 'workflow_dispatch' && inputs.genre || 'hiphop' }}
-      CREATE_PLAYLIST: ${{ github.event_name == 'workflow_dispatch' && inputs.create_playlist || 'true' }}
+      CREATE_PLAYLIST: ${{ github.event_name == 'workflow_dispatch' && inputs.create_playlist || 'false' }}
       PLAYLIST_TITLE: ${{ github.event_name == 'workflow_dispatch' && inputs.playlist_title || '' }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_PREFILTER_MODEL: gemini-3.1-flash-lite
-      GEMINI_CURATOR_MODEL: gemini-3.6-flash
-      MAX_GEMINI_CALLS_PER_RUN: "5"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CURATOR_MODEL: gpt-5.6-sol
+      OPENAI_REASONING_EFFORT: low
+      LISTENBRAINZ_TOKEN: ${{ secrets.LISTENBRAINZ_TOKEN }}
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       MUSIC_PROFILE_PATH: music/profile.v1.json
       MUSIC_STATE_PATH: .music-state/history.json
+      MUSIC_YOUTUBE_CACHE_PATH: .music-state/youtube-cache.json
       MUSIC_OUTPUT_DIR: music-output
-      MUSIC_CATALOG_TARGET: "140"
-      MUSIC_CURATOR_LIMIT: "50"
-      YOUTUBE_SEARCH_LIMIT: "60"
+      MUSIC_CATALOG_TARGET: "110"
+      MUSIC_RERANK_LIMIT: "48"
+      YOUTUBE_SEARCH_LIMIT: "40"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
-      - name: Restore recommendation and resume state
+      - name: Restore recommendation, YouTube cache and resume state
         uses: actions/cache/restore@v4
         with:
           path: .music-state
@@ -125,7 +127,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
+          for name in OPENAI_API_KEY LISTENBRAINZ_TOKEN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET YOUTUBE_REFRESH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub Actions secret: $name"
               missing=1
@@ -134,12 +136,12 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          node music/generate-playlist-gemini.mjs --self-test
+          node music/generate-playlist-openai.mjs --self-test
 
-      - name: Generate and verify playlist
-        run: node music/generate-playlist-gemini.mjs
+      - name: Generate and verify playlist candidates
+        run: node music/generate-playlist-openai.mjs
 
-      - name: Save recommendation and resume state
+      - name: Save recommendation, YouTube cache and resume state
         if: always()
         uses: actions/cache/save@v4
         with:

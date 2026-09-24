@@ -8,7 +8,8 @@ const OUTPUT_DIR = process.env.MUSIC_OUTPUT_DIR || "music-output";
 const RESEARCH_MODEL = process.env.OPENAI_RESEARCH_MODEL || "gpt-5.6-terra";
 const CURATOR_MODEL = process.env.OPENAI_CURATOR_MODEL || "gpt-5.6-sol";
 const RESEARCH_COUNT = Math.max(50, Math.min(100, Number(process.env.MUSIC_RESEARCH_COUNT || 80)));
-const RESOLVE_LIMIT = Math.max(25, Math.min(45, Number(process.env.MUSIC_RESOLVE_LIMIT || 40)));
+const RESOLVE_LIMIT = Math.max(25, Math.min(65, Number(process.env.MUSIC_RESOLVE_LIMIT || 40)));
+const YOUTUBE_SEARCH_FALLBACK_LIMIT = Math.max(0, Math.min(10, Number(process.env.YOUTUBE_SEARCH_FALLBACK_LIMIT || 0)));
 const DAY = 86400000;
 const YT = "https://www.googleapis.com/youtube/v3";
 const OPENAI = "https://api.openai.com/v1/responses";
@@ -41,6 +42,7 @@ async function callOpenAI({ model, instructions, input, schemaName, schema, webS
 
 const candidateSchema = { type:"object", additionalProperties:false, properties:{ candidates:{ type:"array", items:{ type:"object", additionalProperties:false, properties:{ display_artist:{type:"string"}, primary_artists:{type:"array",items:{type:"string"}}, featured_artists:{type:"array",items:{type:"string"}}, title:{type:"string"}, album:{type:"string"}, release_date:{type:"string"}, release_year:{type:"integer"}, release_type:{type:"string",enum:["album","ep","mixtape","unknown"]}, version_type:{type:"string",enum:["original","official_remix"]}, remix_materially_distinct:{type:"boolean"}, scene_eligible:{type:"boolean"}, single_status:{type:"string",enum:["album_cut","single","pre_release","unknown"]}, title_track:{type:"boolean"}, genre_lane:{type:"string"}, evidence_urls:{type:"array",items:{type:"string"},minItems:1,maxItems:4}, research_note:{type:"string"} }, required:["display_artist","primary_artists","featured_artists","title","album","release_date","release_year","release_type","version_type","remix_materially_distinct","scene_eligible","single_status","title_track","genre_lane","evidence_urls","research_note"] } } }, required:["candidates"] };
 const curatorSchema = { type:"object", additionalProperties:false, properties:{ results:{ type:"array", items:{ type:"object", additionalProperties:false, properties:{ candidate_id:{type:"string"}, reject:{type:"boolean"}, reject_reason:{type:"string"}, taste_score:{type:"integer",minimum:0,maximum:100}, deep_cut_score:{type:"integer",minimum:0,maximum:100}, confidence:{type:"integer",minimum:0,maximum:100}, fame_tier:{type:"string",enum:["famous","less_known"]}, traits:{ type:"object", additionalProperties:false, properties:{dark:{type:"integer",minimum:0,maximum:100},aggressive:{type:"integer",minimum:0,maximum:100},bounce:{type:"integer",minimum:0,maximum:100},groove:{type:"integer",minimum:0,maximum:100},bass:{type:"integer",minimum:0,maximum:100},melodic:{type:"integer",minimum:0,maximum:100},hiphop_base:{type:"integer",minimum:0,maximum:100},rage_risk:{type:"integer",minimum:0,maximum:100},electronic_risk:{type:"integer",minimum:0,maximum:100}}, required:["dark","aggressive","bounce","groove","bass","melodic","hiphop_base","rage_risk","electronic_risk"] }, rationale:{type:"string"} }, required:["candidate_id","reject","reject_reason","taste_score","deep_cut_score","confidence","fame_tier","traits","rationale"] } } }, required:["results"] };
+const youtubeResolverSchema = { type:"object", additionalProperties:false, properties:{ matches:{ type:"array", items:{ type:"object", additionalProperties:false, properties:{ candidate_id:{type:"string"}, video_ids:{type:"array",items:{type:"string"},maxItems:3}, source_urls:{type:"array",items:{type:"string"},maxItems:3}, reason:{type:"string"} }, required:["candidate_id","video_ids","source_urls","reason"] } } }, required:["matches"] };
 
 function seedBlocked(t, profile, genre) { if (t.version_type === "official_remix") return false; return (profile.seed_tracks?.[genre] || []).some((s) => titleNorm(t.title) === titleNorm(s.title) && (t.primary_artists || [t.display_artist]).some((a) => norm(a).includes(norm(s.artist)) || norm(s.artist).includes(norm(a)))); }
 function eraBucket(t, now = new Date()) { const d = t.release_date ? new Date(t.release_date) : new Date(Date.UTC(t.release_year,6,1)); if (Number.isNaN(d.getTime())) return "unknown"; const years = Math.max(0,(now-d)/(365.25*DAY)); if (years <= 1) return "recent_12_months"; if (years <= 5) return "one_to_five_years"; if (years <= 10) return "six_to_ten_years"; return "older_than_ten_years"; }
@@ -147,6 +149,40 @@ async function curate(profile, genre, candidates) {
   return { parsed: { results }, response_id: responseIds, usage: usages };
 }
 
+async function locateYouTubeAudio(candidates) {
+  const instructions = `Use web search to locate the actual officially released recording for each supplied track on YouTube. Prefer an Art Track on an "Artist - Topic" channel or a track whose description says it was provided to YouTube by a label/distributor. A clearly labeled Official Audio on the official artist/label channel is an acceptable fallback. Exclude music videos, VEVO videos, lyric videos, visualizers, live/performance recordings, remasters, slowed/reverb/sped-up/nightcore, fan uploads and unofficial remixes. Return zero to three REAL YouTube video IDs per candidate, copied from direct youtube.com/watch, youtu.be, or music.youtube.com URLs found in search results. Never invent or infer a video ID. If a reliable direct video URL cannot be found, return an empty video_ids array. Preserve original vs substantive official remix identity.`;
+  const chunkSize = 20;
+  const matches = [];
+  const responseIds = [];
+  const usages = [];
+
+  for (let i = 0; i < candidates.length; i += chunkSize) {
+    const chunk = candidates.slice(i, i + chunkSize).map((t) => ({
+      candidate_id: t.candidate_id,
+      display_artist: t.display_artist,
+      primary_artists: t.primary_artists,
+      title: t.title,
+      album: t.album,
+      version_type: t.version_type,
+    }));
+    const batch = await callOpenAI({
+      model: RESEARCH_MODEL,
+      instructions,
+      input: { candidates: chunk },
+      schemaName: "youtube_official_audio_locator_v1",
+      schema: youtubeResolverSchema,
+      webSearch: true,
+      effort: "medium",
+      max: 8000,
+    });
+    responseIds.push(batch.response_id);
+    usages.push(batch.usage);
+    matches.push(...(batch.parsed.matches || []));
+  }
+
+  return { matches, response_id: responseIds, usage: usages };
+}
+
 async function googleToken() { const body=new URLSearchParams({client_id:requiredEnv("GOOGLE_CLIENT_ID"),client_secret:requiredEnv("GOOGLE_CLIENT_SECRET"),refresh_token:requiredEnv("YOUTUBE_REFRESH_TOKEN"),grant_type:"refresh_token"}); const r=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body}); if(!r.ok) throw new Error(`Google token refresh failed (${r.status}): ${(await r.text()).slice(0,500)}`); const d=await r.json(); return d.access_token; }
 async function ytGet(pathname, token, params={}) { const u=new URL(`${YT}/${pathname}`); for(const[k,v]of Object.entries(params)) if(v!==undefined&&v!==null&&v!=="")u.searchParams.set(k,String(v)); const r=await fetch(u,{headers:{authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error(`YouTube GET ${pathname} failed (${r.status}): ${(await r.text()).slice(0,700)}`); return r.json(); }
 async function ytPost(pathname, token, params, body) { const u=new URL(`${YT}/${pathname}`); for(const[k,v]of Object.entries(params||{}))u.searchParams.set(k,String(v)); const r=await fetch(u,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`YouTube POST ${pathname} failed (${r.status}): ${(await r.text()).slice(0,700)}`); return r.json(); }
@@ -166,10 +202,63 @@ function classifyOfficialAudio(t, v) {
 }
 async function resolveYouTube(t, token) {
   const q=`${t.display_artist} ${t.title} ${t.version_type === "official_remix" ? "remix" : ""}`;
-  const s=await ytGet("search",token,{part:"snippet",q,type:"video",videoCategoryId:10,maxResults:15}); const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean); if(!ids.length)return null;
+  const s=await ytGet("search",token,{part:"snippet",q,type:"video",videoCategoryId:10,maxResults:50}); const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean); if(!ids.length)return null;
   const d=await ytGet("videos",token,{part:"snippet,contentDetails,statistics,status",id:ids.join(",")});
   const ranked=[]; for(const item of d.items||[]){const v={videoId:item.id,title:item.snippet?.title||"",description:item.snippet?.description||"",channelTitle:item.snippet?.channelTitle||"",durationSeconds:isoSeconds(item.contentDetails?.duration),publishedAt:item.snippet?.publishedAt||"",viewCount:Number(item.statistics?.viewCount||0)}; if(!Number.isFinite(v.durationSeconds)||v.durationSeconds<60||v.durationSeconds>720)continue; const c=classifyOfficialAudio(t,v); if(c.ok)ranked.push({...v,audioType:c.type});}
   ranked.sort((a,b)=>(a.audioType==="art_track"?-1:0)-(b.audioType==="art_track"?-1:0)||a.viewCount-b.viewCount); return ranked[0]||null;
+}
+async function resolveYouTubeCandidates(candidates, token) {
+  const locator = await locateYouTubeAudio(candidates);
+  const byCandidate = new Map(locator.matches.map((m) => [m.candidate_id, m]));
+  const allIds = [...new Set(locator.matches.flatMap((m) => m.video_ids || []).filter((id) => /^[A-Za-z0-9_-]{11}$/.test(id)))];
+  const detailMap = new Map();
+
+  for (let i = 0; i < allIds.length; i += 50) {
+    const ids = allIds.slice(i, i + 50);
+    const data = await ytGet("videos", token, { part:"snippet,contentDetails,statistics,status", id:ids.join(",") });
+    for (const item of data.items || []) {
+      detailMap.set(item.id, {
+        videoId:item.id,
+        title:item.snippet?.title||"",
+        description:item.snippet?.description||"",
+        channelTitle:item.snippet?.channelTitle||"",
+        durationSeconds:isoSeconds(item.contentDetails?.duration),
+        publishedAt:item.snippet?.publishedAt||"",
+        viewCount:Number(item.statistics?.viewCount||0),
+      });
+    }
+  }
+
+  const resolved = [];
+  const rejected = [];
+  const unresolved = [];
+  for (const t of candidates) {
+    const located = byCandidate.get(t.candidate_id);
+    const valid = [];
+    for (const id of located?.video_ids || []) {
+      const v = detailMap.get(id);
+      if (!v || !Number.isFinite(v.durationSeconds) || v.durationSeconds < 60 || v.durationSeconds > 720) continue;
+      const c = classifyOfficialAudio(t, v);
+      if (c.ok) valid.push({ ...v, audioType:c.type });
+    }
+    valid.sort((a,b)=>(a.audioType==="art_track"?-1:0)-(b.audioType==="art_track"?-1:0)||a.viewCount-b.viewCount);
+    if (valid[0]) resolved.push({ ...t, youtube:valid[0] });
+    else unresolved.push(t);
+  }
+
+  for (let i = 0; i < unresolved.length; i += 1) {
+    const t = unresolved[i];
+    if (i < YOUTUBE_SEARCH_FALLBACK_LIMIT) {
+      const y = await resolveYouTube(t, token);
+      if (y) {
+        resolved.push({ ...t, youtube:y });
+        continue;
+      }
+    }
+    rejected.push({ candidate_id:t.candidate_id, artist:t.display_artist, title:t.title });
+  }
+
+  return { resolved, rejected, locator };
 }
 async function createPlaylist(token,title,description){return ytPost("playlists",token,{part:"snippet,status"},{snippet:{title,description},status:{privacyStatus:"private"}});}
 async function deletePlaylist(token,playlistId){return ytDelete("playlists",token,{id:playlistId});}
@@ -198,7 +287,7 @@ async function main(){if(process.argv.includes("--credential-test")){await crede
   const audit={started_at:new Date().toISOString(),genre,profile_version:profile.version,rules_version:RULES_VERSION,prompt_version:PROMPT_VERSION,models:{research:RESEARCH_MODEL,curator:CURATOR_MODEL}};
   const research=await researchCandidates(profile,genre);audit.research={response_id:research.response_id,usage:research.usage,count:research.parsed.candidates.length};const filtered=hardFilter(research.parsed.candidates,profile,genre,state);audit.hard_rejected=filtered.rejected;if(filtered.kept.length<30)throw new Error(`Only ${filtered.kept.length} candidates survived hard filters; refusing low-quality generation.`);
   const cur=await curate(profile,genre,filtered.kept);audit.curation={response_id:cur.response_id,usage:cur.usage};const scored=mergeCuration(filtered.kept,cur.parsed.results,genre);const shortlist=balancedShortlist(scored,profile,RESOLVE_LIMIT);audit.shortlist_count=shortlist.length;
-  const token=await googleToken();const resolved=[],resolutionRejected=[];for(const t of shortlist){const y=await resolveYouTube(t,token);if(y)resolved.push({...t,youtube:y});else resolutionRejected.push({candidate_id:t.candidate_id,artist:t.display_artist,title:t.title});}audit.youtube_rejected=resolutionRejected;audit.verified_count=resolved.length;
+  const token=await googleToken();const resolution=await resolveYouTubeCandidates(shortlist,token);const resolved=resolution.resolved;const resolutionRejected=resolution.rejected;audit.youtube_locator={response_id:resolution.locator.response_id,usage:resolution.locator.usage};audit.youtube_rejected=resolutionRejected;audit.verified_count=resolved.length;
   console.log("music pipeline counts", { researched: research.parsed.candidates.length, hardKept: filtered.kept.length, scored: scored.length, shortlist: shortlist.length, verified: resolved.length, youtubeRejected: resolutionRejected.length });
   let optimized;
   try {

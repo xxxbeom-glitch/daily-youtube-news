@@ -75,3 +75,5 @@ Required secrets for the active workflow:
 Manual runs default to `create_playlist=false` for dry-run QA. Enable playlist creation only after reviewing the audit output.
 
 Tagged push dry-runs use a 10-track test target.
+
+For tagged 10-track QA runs, YouTube `search.list` is disabled; resolution uses cached IDs and MusicBrainz-linked YouTube videos/playlists only.

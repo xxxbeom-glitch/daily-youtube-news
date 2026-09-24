@@ -55,3 +55,7 @@ The workflow resolves up to 40 tracks through YouTube search and then inserts fi
 Open GitHub Actions -> `Music discovery playlist` -> `Run workflow`, choose `hiphop` or `rnb`, and leave `create_playlist=true` for the real test. A temporary timestamped title is used only when no title is supplied.
 
 Each run uploads a JSON audit artifact containing hard-filter rejections, YouTube verification failures, selected tracks, model versions, model response IDs and curation scores.
+
+## Gemini v2 cost policy
+
+The active music workflow uses ListenBrainz and MusicBrainz for factual catalog discovery, Gemini 3.1 Flash-Lite for bulk classification, and Gemini 3.6 Flash for final compact scoring. The workflow contains no OpenAI fallback, caps Gemini inference at five calls per run, and saves checkpoints so YouTube-stage failures can resume without repeating Gemini scoring.

@@ -18,7 +18,8 @@ const PROMPT_VERSION = "music-prompts-v1";
 const norm = (v = "") => String(v).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/\b(feat|featuring|ft)\.?\b.*$/i, " ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 const titleNorm = (v = "") => norm(v).replace(/\b(clean|explicit|radio edit|album version|single version)\b/g, " ").trim().replace(/\s+/g, " ");
 const trackKey = (t) => `${(t.primary_artists || [t.display_artist || ""]).map(norm).sort().join("+")}|${titleNorm(t.title)}|${t.version_type === "official_remix" ? "official_remix" : "original"}`;
-const albumKey = (t) => `${norm((t.primary_artists || [t.display_artist || ""])[0])}|${norm(t.album || "unknown")}`;
+const primaryKeys = (t) => [...new Set((t.primary_artists?.length ? t.primary_artists : [t.display_artist || ""]).map(norm).filter(Boolean))];
+const albumKey = (t) => `${primaryKeys(t).sort().join("+")}|${norm(t.album || "unknown")}`;
 const clamp = (n) => Math.max(0, Math.min(100, Number(n) || 0));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

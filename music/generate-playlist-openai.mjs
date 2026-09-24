@@ -11,7 +11,8 @@ const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
 const CATALOG_TARGET = Math.max(80, Math.min(140, Number(process.env.MUSIC_CATALOG_TARGET || 110)));
 const RERANK_LIMIT = Math.max(30, Math.min(55, Number(process.env.MUSIC_RERANK_LIMIT || 48)));
 const TEST_TRACK_LIMIT = Math.max(0, Math.min(20, Number(process.env.MUSIC_TEST_TRACK_LIMIT || 0)));
-const YOUTUBE_SEARCH_LIMIT = Math.max(10, Math.min(50, Number(process.env.YOUTUBE_SEARCH_LIMIT || 40)));
+const YOUTUBE_SEARCH_LIMIT = Math.max(0, Math.min(50, Number(process.env.YOUTUBE_SEARCH_LIMIT || 40)));
+const YOUTUBE_SEARCH_FALLBACK = String(process.env.YOUTUBE_SEARCH_FALLBACK || "true").toLowerCase() === "true";
 const CHECKPOINT_MAX_AGE_MS = 2 * 86400000;
 const NEGATIVE_YOUTUBE_CACHE_MS = 7 * 86400000;
 const DAY = 86400000;
@@ -408,14 +409,36 @@ function youtubeIdFromUrl(value) {
   return null;
 }
 
-function directYouTubeIds(recording) {
-  const ids = [];
-  for (const relation of recording.relations || []) {
-    const target = relation?.url?.resource || relation?.target || "";
-    const id = youtubeIdFromUrl(target);
-    if (id && !ids.includes(id)) ids.push(id);
+function youtubePlaylistIdFromUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!/(^|\.)youtube\.com$/i.test(url.hostname) && !/(^|\.)music\.youtube\.com$/i.test(url.hostname)) {
+      return null;
+    }
+    const list = url.searchParams.get("list") || "";
+    return /^[A-Za-z0-9_-]{10,}$/.test(list) ? list : null;
+  } catch {
+    return null;
   }
-  return ids.slice(0, 3);
+}
+
+function youtubeResourcesFromRelations(relations = []) {
+  const videoIds = [];
+  const playlistIds = [];
+
+  for (const relation of relations) {
+    const target = relation?.url?.resource || relation?.target || "";
+    const videoId = youtubeIdFromUrl(target);
+    const playlistId = youtubePlaylistIdFromUrl(target);
+    if (videoId && !videoIds.includes(videoId)) videoIds.push(videoId);
+    if (playlistId && !playlistIds.includes(playlistId)) playlistIds.push(playlistId);
+  }
+
+  return { videoIds, playlistIds };
+}
+
+function directYouTubeIds(recording) {
+  return youtubeResourcesFromRelations(recording.relations || []).videoIds.slice(0, 3);
 }
 
 function buildCatalogCandidate(recording, sourceRow) {
@@ -909,6 +932,109 @@ async function getVideoDetails(token, ids) {
   return map;
 }
 
+async function listPlaylistVideoIds(token, playlistId, maxPages = 2) {
+  const ids = [];
+  let pageToken = null;
+  let pages = 0;
+
+  do {
+    const data = await ytGet("playlistItems", token, {
+      part: "contentDetails",
+      playlistId,
+      maxResults: 50,
+      pageToken
+    });
+
+    for (const item of data.items || []) {
+      const id = item.contentDetails?.videoId;
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+
+    pageToken = data.nextPageToken || null;
+    pages += 1;
+  } while (pageToken && pages < maxPages);
+
+  return ids;
+}
+
+async function relationResourcesForCandidate(t, cache) {
+  const key = trackKey(t);
+  const cached = cache.entries?.[key];
+
+  if (cached?.relation_resources_checked_at) {
+    return {
+      videoIds: cached.relation_video_ids || [],
+      playlistIds: cached.relation_playlist_ids || []
+    };
+  }
+
+  const recording = await musicBrainzJson("recording/" + t.recording_mbid, {
+    fmt: "json",
+    inc: "releases+release-groups+url-rels"
+  });
+
+  const resources = youtubeResourcesFromRelations(recording.relations || []);
+  const accepted = (recording.releases || [])
+    .filter((release) => ["album", "ep", "mixtape"].includes(releaseType(release)) && releaseYear(release))
+    .sort((a, b) => releaseYear(a) - releaseYear(b));
+
+  const chosen = accepted[0] || null;
+  const releaseMbid = chosen?.id || null;
+  const releaseGroupMbid = chosen?.["release-group"]?.id || null;
+
+  for (const [entity, mbid] of [["release", releaseMbid], ["release-group", releaseGroupMbid]]) {
+    if (!mbid) continue;
+    try {
+      const data = await musicBrainzJson(entity + "/" + mbid, {
+        fmt: "json",
+        inc: "url-rels"
+      });
+      const found = youtubeResourcesFromRelations(data.relations || []);
+      for (const id of found.videoIds) if (!resources.videoIds.includes(id)) resources.videoIds.push(id);
+      for (const id of found.playlistIds) if (!resources.playlistIds.includes(id)) resources.playlistIds.push(id);
+    } catch (error) {
+      console.warn("MusicBrainz " + entity + " YouTube relations skipped", mbid, error instanceof Error ? error.message : error);
+    }
+  }
+
+  cache.entries ||= {};
+  cache.entries[key] = {
+    ...(cache.entries[key] || {}),
+    relation_video_ids: resources.videoIds.slice(0, 10),
+    relation_playlist_ids: resources.playlistIds.slice(0, 6),
+    relation_resources_checked_at: new Date().toISOString()
+  };
+
+  return {
+    videoIds: cache.entries[key].relation_video_ids,
+    playlistIds: cache.entries[key].relation_playlist_ids
+  };
+}
+
+async function resolveViaRelations(t, token, cache) {
+  const resources = await relationResourcesForCandidate(t, cache);
+
+  if (resources.videoIds.length) {
+    const details = await getVideoDetails(token, resources.videoIds);
+    const direct = chooseOfficialAudio(t, resources.videoIds.map((id) => details.get(id)));
+    if (direct) return { ...direct, resolutionSource: "musicbrainz_video_relation" };
+  }
+
+  for (const playlistId of resources.playlistIds) {
+    try {
+      const ids = await listPlaylistVideoIds(token, playlistId, 2);
+      if (!ids.length) continue;
+      const details = await getVideoDetails(token, ids);
+      const match = chooseOfficialAudio(t, ids.map((id) => details.get(id)));
+      if (match) return { ...match, resolutionSource: "musicbrainz_youtube_playlist" };
+    } catch (error) {
+      console.warn("YouTube playlist relation skipped", playlistId, error instanceof Error ? error.message : error);
+    }
+  }
+
+  return null;
+}
+
 function chooseOfficialAudio(t, videos) {
   const ranked = [];
 
@@ -996,48 +1122,87 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
 
   let optimized = optimizeForRun(resolved, profile);
   let searches = 0;
+  let relationAttempts = 0;
+  let relationResolved = 0;
   let quotaExhausted = false;
 
   for (const t of candidates) {
-    if (optimized || searches >= YOUTUBE_SEARCH_LIMIT) break;
+    if (optimized) break;
 
     const key = trackKey(t);
     if (resolvedKeys.has(key)) continue;
-    if (freshNegativeCache(cache.entries[key])) continue;
 
-    try {
-      const youtube = await resolveYouTubeSearch(t, token);
-      searches += 1;
-
-      if (youtube) {
-        resolved.push({ ...t, youtube });
-        resolvedKeys.add(key);
-        cache.entries[key] = {
-          video_id: youtube.videoId,
-          audio_type: youtube.audioType,
-          title: youtube.title,
-          channel_title: youtube.channelTitle,
-          duration_seconds: youtube.durationSeconds,
-          verified_at: new Date().toISOString()
-        };
-      } else {
-        cache.entries[key] = {
-          missed_at: new Date().toISOString()
-        };
-      }
-
+    relationAttempts += 1;
+    const youtube = await resolveViaRelations(t, token, cache);
+    if (!youtube) {
       await writeJson(YOUTUBE_CACHE_PATH, cache);
-      if (onProgress) await onProgress({ resolved, searches, quotaExhausted: false });
+      continue;
+    }
 
-      if (resolved.length >= (TEST_TRACK_LIMIT || 28)) optimized = optimizeForRun(resolved, profile);
-    } catch (error) {
-      if (error?.isQuota) {
-        quotaExhausted = true;
+    relationResolved += 1;
+    resolved.push({ ...t, youtube });
+    resolvedKeys.add(key);
+    cache.entries[key] = {
+      ...(cache.entries[key] || {}),
+      video_id: youtube.videoId,
+      audio_type: youtube.audioType,
+      resolution_source: youtube.resolutionSource,
+      title: youtube.title,
+      channel_title: youtube.channelTitle,
+      duration_seconds: youtube.durationSeconds,
+      verified_at: new Date().toISOString()
+    };
+
+    await writeJson(YOUTUBE_CACHE_PATH, cache);
+    if (onProgress) await onProgress({ resolved, searches, relationAttempts, relationResolved, quotaExhausted: false });
+    if (resolved.length >= (TEST_TRACK_LIMIT || 28)) optimized = optimizeForRun(resolved, profile);
+  }
+
+  if (YOUTUBE_SEARCH_FALLBACK && YOUTUBE_SEARCH_LIMIT > 0) {
+    for (const t of candidates) {
+      if (optimized || searches >= YOUTUBE_SEARCH_LIMIT) break;
+
+      const key = trackKey(t);
+      if (resolvedKeys.has(key)) continue;
+      if (freshNegativeCache(cache.entries[key])) continue;
+
+      try {
+        const youtube = await resolveYouTubeSearch(t, token);
+        searches += 1;
+
+        if (youtube) {
+          resolved.push({ ...t, youtube: { ...youtube, resolutionSource: "youtube_search" } });
+          resolvedKeys.add(key);
+          cache.entries[key] = {
+            ...(cache.entries[key] || {}),
+            video_id: youtube.videoId,
+            audio_type: youtube.audioType,
+            resolution_source: "youtube_search",
+            title: youtube.title,
+            channel_title: youtube.channelTitle,
+            duration_seconds: youtube.durationSeconds,
+            verified_at: new Date().toISOString()
+          };
+        } else {
+          cache.entries[key] = {
+            ...(cache.entries[key] || {}),
+            missed_at: new Date().toISOString()
+          };
+        }
+
         await writeJson(YOUTUBE_CACHE_PATH, cache);
-        if (onProgress) await onProgress({ resolved, searches, quotaExhausted: true });
-        break;
+        if (onProgress) await onProgress({ resolved, searches, relationAttempts, relationResolved, quotaExhausted: false });
+
+        if (resolved.length >= (TEST_TRACK_LIMIT || 28)) optimized = optimizeForRun(resolved, profile);
+      } catch (error) {
+        if (error?.isQuota) {
+          quotaExhausted = true;
+          await writeJson(YOUTUBE_CACHE_PATH, cache);
+          if (onProgress) await onProgress({ resolved, searches, relationAttempts, relationResolved, quotaExhausted: true });
+          break;
+        }
+        throw error;
       }
-      throw error;
     }
   }
 
@@ -1055,6 +1220,8 @@ async function resolveYouTubePool(candidates, token, profile, cache, onProgress)
     rejected,
     optimized: optimized || optimizeForRun(resolved, profile),
     searches,
+    relationAttempts,
+    relationResolved,
     quotaExhausted
   };
 }
@@ -1318,6 +1485,7 @@ async function selfTest() {
   );
   assert.equal(youtubeIdFromUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(youtubeIdFromUrl("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(youtubePlaylistIdFromUrl("https://music.youtube.com/playlist?list=OLAK5uy_test123"), "OLAK5uy_test123");
 
   console.log("openai music self-test passed");
 }
@@ -1519,7 +1687,10 @@ async function main() {
     rerank_pool: rerankPool.length,
     curated: curated.length,
     shortlist: shortlist.length,
+    youtube_search_fallback: YOUTUBE_SEARCH_FALLBACK,
     youtube_searches: resolution.searches,
+    youtube_relation_attempts: resolution.relationAttempts,
+    youtube_relation_resolved: resolution.relationResolved,
     youtube_verified: resolution.resolved.length,
     youtube_rejected: resolution.rejected,
     playlist_id: playlist?.id || null,

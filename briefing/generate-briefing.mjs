@@ -13,12 +13,12 @@ import {
 
 const OUTPUT_DIR = process.env.BRIEFING_OUTPUT_DIR || "briefing-output";
 const SCRIPT_MODEL = process.env.BRIEFING_SCRIPT_MODEL || "gpt-5.6-luna";
-const TTS_MODEL = process.env.BRIEFING_TTS_MODEL || "gpt-4o-mini-tts";
-const MAIN_VOICE = process.env.BRIEFING_VOICE || "coral";
-const SAMPLE_VOICES = (process.env.BRIEFING_SAMPLE_VOICES || "alloy,ash,coral,nova,onyx,sage,shimmer,marin,cedar")
-  .split(",")
-  .map((voice) => voice.trim())
-  .filter(Boolean);
+// TTS 제공자: google(Chirp 3 HD, 한국어 자연스러움) 또는 openai(gpt-4o-mini-tts).
+const TTS_PROVIDER = process.env.BRIEFING_TTS_PROVIDER || (process.env.GOOGLE_TTS_API_KEY ? "google" : "openai");
+const TTS_MODEL = TTS_PROVIDER === "google" ? "chirp3-hd" : (process.env.BRIEFING_TTS_MODEL || "gpt-4o-mini-tts");
+const GOOGLE_TTS_API = "https://texttospeech.googleapis.com/v1";
+const OPENAI_SAMPLE_VOICES = "alloy,ash,coral,nova,onyx,sage,shimmer,marin,cedar";
+const SAMPLE_VOICE_LIMIT = 8;
 const TARGET_CHARS = Number(process.env.BRIEFING_TARGET_CHARS || 2500);
 const SEGMENT_PAUSE_SECONDS = 0.7;
 
@@ -120,7 +120,66 @@ async function writeBriefingScript(videos, playlistTitle) {
   return { segments, usage: data.usage, responseId: data.id };
 }
 
+// ko-KR Chirp 3 HD 목소리 목록을 API에서 가져온다. 이름을 하드코딩하지 않기 위함.
+async function listGoogleKoreanVoices() {
+  const url = new URL(`${GOOGLE_TTS_API}/voices`);
+  url.searchParams.set("languageCode", "ko-KR");
+  url.searchParams.set("key", requiredEnv("GOOGLE_TTS_API_KEY"));
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Google TTS voices failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+  }
+  const data = await response.json();
+  return (data.voices || [])
+    .filter((voice) => voice.name.includes("Chirp3-HD"))
+    .map((voice) => ({ name: voice.name, gender: voice.ssmlGender }));
+}
+
+async function synthesizeGoogle(text, voice, filePath) {
+  const url = new URL(`${GOOGLE_TTS_API}/text:synthesize`);
+  url.searchParams.set("key", requiredEnv("GOOGLE_TTS_API_KEY"));
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      input: { text },
+      voice: { languageCode: "ko-KR", name: voice },
+      audioConfig: { audioEncoding: "MP3" },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Google TTS failed (${voice}, ${response.status}): ${(await response.text()).slice(0, 300)}`);
+  }
+  const data = await response.json();
+  writeFileSync(filePath, Buffer.from(data.audioContent, "base64"));
+}
+
 async function synthesize(text, voice, filePath) {
+  if (TTS_PROVIDER === "google") return synthesizeGoogle(text, voice, filePath);
+  return synthesizeOpenAI(text, voice, filePath);
+}
+
+async function resolveVoices() {
+  if (TTS_PROVIDER !== "google") {
+    const samples = (process.env.BRIEFING_SAMPLE_VOICES || OPENAI_SAMPLE_VOICES).split(",").map((v) => v.trim()).filter(Boolean);
+    return { main: process.env.BRIEFING_VOICE || "coral", samples };
+  }
+  const voices = await listGoogleKoreanVoices();
+  if (!voices.length) throw new Error("No ko-KR Chirp 3 HD voices available");
+  // 남녀 목소리를 번갈아 골라 비교 샘플을 만든다.
+  const male = voices.filter((voice) => voice.gender === "MALE");
+  const female = voices.filter((voice) => voice.gender !== "MALE");
+  const mixed = [];
+  for (let i = 0; mixed.length < SAMPLE_VOICE_LIMIT && (i < male.length || i < female.length); i += 1) {
+    if (female[i]) mixed.push(female[i].name);
+    if (male[i] && mixed.length < SAMPLE_VOICE_LIMIT) mixed.push(male[i].name);
+  }
+  const requested = process.env.BRIEFING_VOICE;
+  const main = voices.some((voice) => voice.name === requested) ? requested : mixed[0];
+  return { main, samples: mixed };
+}
+
+async function synthesizeOpenAI(text, voice, filePath) {
   const response = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",
     headers: {
@@ -196,14 +255,16 @@ async function main() {
   writeFileSync(path.join(OUTPUT_DIR, "script.md"), `# ${playlistTitle} 브리핑 원고\n\n${scriptText}\n`);
   writeFileSync(path.join(OUTPUT_DIR, "script.json"), JSON.stringify(script, null, 2));
 
-  // 전체 브리핑은 MAIN_VOICE 하나로 만든다.
+  const { main: mainVoice, samples: sampleVoices } = await resolveVoices();
+
+  // 전체 브리핑은 목소리 하나로 만든다.
   const parts = [];
   for (const [index, segment] of script.segments.entries()) {
     const partPath = path.join(workDir, `${String(index).padStart(2, "0")}.mp3`);
-    await synthesize(segment.text, MAIN_VOICE, partPath);
+    await synthesize(segment.text, mainVoice, partPath);
     parts.push(partPath);
   }
-  const briefingPath = path.join(OUTPUT_DIR, `briefing-${MAIN_VOICE}.mp3`);
+  const briefingPath = path.join(OUTPUT_DIR, `briefing-${mainVoice}.mp3`);
   concatAudio(parts, briefingPath, workDir);
 
   // 목소리 비교용 샘플: 오프닝 + 첫 꼭지를 목소리별로 만든다. 지원하지 않는 목소리는 건너뛴다.
@@ -211,7 +272,7 @@ async function main() {
   const sampleDir = path.join(OUTPUT_DIR, "voice-samples");
   mkdirSync(sampleDir, { recursive: true });
   const sampleResults = [];
-  for (const voice of SAMPLE_VOICES) {
+  for (const voice of sampleVoices) {
     try {
       await synthesize(sampleText, voice, path.join(sampleDir, `sample-${voice}.mp3`));
       sampleResults.push(`${voice} ✅`);
@@ -227,7 +288,7 @@ async function main() {
     `## ${playlistTitle} 브리핑 테스트`,
     "",
     `- 영상 ${videos.length}개 → 원고 ${script.segments.length}개 구간, ${scriptChars}자`,
-    `- 음성 길이: ${Math.floor(seconds / 60)}분 ${Math.round(seconds % 60)}초 (목소리 ${MAIN_VOICE}, ${TTS_MODEL})`,
+    `- 음성 길이: ${Math.floor(seconds / 60)}분 ${Math.round(seconds % 60)}초 (목소리 ${mainVoice}, ${TTS_PROVIDER}/${TTS_MODEL})`,
     `- 원고 모델: ${SCRIPT_MODEL}, 토큰 ${script.usage?.total_tokens ?? "?"}`,
     `- 목소리 샘플: ${sampleResults.join(", ")}`,
     "",

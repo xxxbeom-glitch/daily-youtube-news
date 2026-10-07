@@ -1,0 +1,53 @@
+name: News briefing audio test
+
+on:
+  workflow_dispatch:
+    inputs:
+      voice:
+        description: Voice for the full briefing
+        required: true
+        type: string
+        default: coral
+      playlist_title:
+        description: Optional playlist title (blank uses today's playlist)
+        required: false
+        type: string
+        default: ""
+  push:
+    branches:
+      - briefing-test
+
+permissions:
+  contents: read
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      BRIEFING_VOICE: ${{ inputs.voice || 'coral' }}
+      BRIEFING_PLAYLIST_TITLE: ${{ inputs.playlist_title || '' }}
+      BRIEFING_OUTPUT_DIR: briefing-output
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Ensure ffmpeg
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+      - name: Generate briefing script and audio
+        run: node briefing/generate-briefing.mjs
+      - name: Upload briefing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-briefing-${{ github.run_id }}
+          path: |
+            briefing-output
+            !briefing-output/parts
+          if-no-files-found: ignore
+          retention-days: 14

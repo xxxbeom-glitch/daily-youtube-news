@@ -1,0 +1,15 @@
+{
+  "feature": "audio-briefing",
+  "enabled": false,
+  "mode": "dry-run",
+  "targetLanguage": "ko-KR",
+  "sourcePolicy": "permissioned-full-text-only",
+  "desiredMinutes": 8,
+  "maxItems": 8,
+  "publishAudio": false,
+  "writeToYouTube": false,
+  "generateOnCron": false,
+  "includeOriginalSourceLinks": true,
+  "requireEditorialReview": true,
+  "notes": "Documented defaults only. No app code automatically reads this file."
+}

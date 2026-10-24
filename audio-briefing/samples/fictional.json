@@ -1,0 +1,21 @@
+{
+  "notice": "FICTIONAL DEMO DATA. NOT VALID FOR LIVE NEWS PUBLICATION.",
+  "date": "2026-10-25",
+  "playlistId": "fictional-playlist",
+  "items": [
+    {
+      "videoId": "fictional-clip",
+      "title": "가상 시범 교통 안내 소식 (테스트 전용)",
+      "category": "생활",
+      "evidence": [
+        {
+          "sourceId": "fictional-001",
+          "publisher": "Fictional newsroom for testing only",
+          "url": "https://example.org/fictional-story",
+          "rights": "owned",
+          "text": "이 원문은 실제 뉴스를 나타내지 않는 가상의 테스트 자료입니다. 가상의 도시와 가상의 기관이 다음 달 새로운 교통 안내 서비스를 일부 노선에서 시험한다고 발표했다는 가정에 관한 문장입니다. 어떤 실제 시정 발표나 공식 정책을 의미하지 않으며 실제 방송으로 발행해서는 안 됩니다."
+        }
+      ]
+    }
+  ]
+}

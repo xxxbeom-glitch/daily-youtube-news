@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#141917">
+<title>오늘의 뉴스</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+/* 컨셉: 어두운 새벽 톤 안에서 읽을수록 조금씩 푸르게 밝아진다. */
+:root{--dawn:#141917;--sun:#f0b545;--ink:#e3e2da;--font:'Pretendard Variable',Pretendard,'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--dawn)}
+body{font-family:var(--font);word-break:keep-all;line-height:1.5;-webkit-tap-highlight-color:transparent;-webkit-font-smoothing:antialiased}
+h1,h2,h3,p,ul{margin:0;padding:0}
+ul{list-style:none}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:is(a,button):focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.app{position:relative;height:100dvh;max-width:480px;margin:0 auto;overflow:hidden;background:var(--dawn)}
+.deck{height:100%;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+.deck::-webkit-scrollbar{display:none}
+.slide{position:relative;flex:0 0 100%;min-width:0;height:100%;scroll-snap-align:start;scroll-snap-stop:always;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);color:var(--fg)}
+.body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:calc(env(safe-area-inset-top,0px) + 44px) 24px 24px}
+
+.bar{position:absolute;z-index:3;top:0;left:0;right:0;height:2px;background:color-mix(in srgb,var(--ink) 22%,transparent)}
+.bar i{display:block;width:0;height:100%;background:var(--sun);transition:width .25s ease}
+
+.stale{font-size:15px;font-weight:600;color:var(--sun);margin-bottom:10px}
+.num{display:flex;justify-content:space-between;font-size:17px;font-weight:600}
+.slide h2{font-size:clamp(40px,12.2vw,54px);line-height:1.2;font-weight:800;letter-spacing:-.045em;margin:14px 0 22px;text-wrap:pretty}
+.slide .sum{font-size:clamp(20px,5.7vw,24px);line-height:1.5;font-weight:500;letter-spacing:-.025em}
+.blocks{flex:1;min-height:0;overflow-y:auto;scroll-snap-type:y mandatory;scrollbar-width:none;overscroll-behavior-y:contain}
+.blocks::-webkit-scrollbar{display:none}
+.blk{min-height:100%;scroll-snap-align:start;scroll-snap-stop:always;transition:opacity .3s ease}
+.blk:not(.cur){opacity:0}
+.more{margin-top:16px;font-size:15px;font-weight:500}
+.dots{display:flex;align-items:center;gap:6px}
+.dots i{width:6px;height:6px;border-radius:50%;background:color-mix(in srgb,var(--fg) 30%,transparent);transition:background .2s}
+.dots i.cur{background:var(--sun)}
+.srcs{flex:none;display:flex;flex-wrap:nowrap;align-items:center;gap:16px;overflow:hidden;min-height:60px;padding:6px 24px calc(env(safe-area-inset-bottom,0px) + 6px);border-top:1px solid color-mix(in srgb,var(--fg) 18%,transparent)}
+.src{flex:none;display:inline-flex;align-items:center;min-height:44px;font-size:15px;font-weight:500;white-space:nowrap;text-decoration:underline;text-underline-offset:4px;text-decoration-thickness:1px}
+
+.end .body{display:block;overflow-y:auto;padding-bottom:40px}
+.end h2{position:relative;margin:0;font-size:clamp(44px,13vw,56px);line-height:1.1}
+.end .note{position:relative;font-size:19px;font-weight:500;margin-top:10px}
+.end h3{font-size:17px;font-weight:700;margin:32px 0 6px}
+.row{display:flex;gap:12px;width:100%;min-height:48px;align-items:baseline;text-align:left;text-decoration:none;padding:13px 0;border-top:1px solid color-mix(in srgb,var(--fg) 22%,transparent);font-size:18px;font-weight:500;line-height:1.4;letter-spacing:-.015em}
+.row b{flex:none;width:20px;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.again{display:block;margin-top:28px;min-height:48px;font-size:15px;text-decoration:underline;text-underline-offset:4px}
+.w{display:inline-block;overflow:hidden;vertical-align:top;padding:0 .06em .1em 0;margin:0 -.06em -.1em 0}
+.w>span{display:inline-block}
+/* 등장: 카드가 화면에 들어오면 제목이 단어별로 올라오고, 요약과 출처가 뒤따른다. */
+.slide:not(.on) .w>span{transform:translateY(112%)}
+.slide:not(.on) :is(.num,.sum,.more,.src,.note,.end h3,.row,.again){opacity:0;transform:translateY(14px)}
+.on .w>span,.on :is(.num,.sum,.more,.src,.note,h3,.row,.again){transition:transform .6s cubic-bezier(.2,.85,.2,1) var(--d,0ms),opacity .45s ease var(--d,0ms)}
+
+/* 상태 화면: 불러오는 중, 잠김, 실패 */
+.state{height:100%;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 44px) 24px 24px;color:var(--ink)}
+.state h2{font-size:clamp(34px,10vw,44px);line-height:1.2;font-weight:800;letter-spacing:-.045em}
+.state p{font-size:clamp(18px,5vw,20px);line-height:1.5;font-weight:500;letter-spacing:-.025em;margin-top:16px}
+.retry{align-self:flex-start;min-height:48px;margin-top:20px;font-size:17px;font-weight:600;text-decoration:underline;text-underline-offset:4px}
+.sk{display:block;border-radius:6px;background:color-mix(in srgb,var(--ink) 12%,transparent);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}.blk:not(.cur){opacity:1}.bar i,.blk,.on .w>span,.on :is(.num,.sum,.more,.src,.note,h3,.row,.again){transition:none}.slide:not(.on) .w>span,.slide:not(.on) :is(.num,.sum,.more,.src,.note,.end h3,.row,.again){transform:none;opacity:1}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="bar" id="bar" role="progressbar" aria-label="읽은 위치" aria-valuemin="0"><i id="fill"></i></div>
+  <div class="deck" id="deck">
+    <div class="state" style="flex:0 0 100%" aria-busy="true" aria-label="불러오는 중">
+      <span class="sk" style="width:84px;height:20px"></span>
+      <span class="sk" style="width:92%;height:52px;margin-top:18px"></span>
+      <span class="sk" style="width:68%;height:52px;margin-top:10px"></span>
+      <span class="sk" style="width:100%;height:22px;margin-top:30px"></span>
+      <span class="sk" style="width:100%;height:22px;margin-top:12px"></span>
+      <span class="sk" style="width:74%;height:22px;margin-top:12px"></span>
+    </div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id),deck=$('deck');
+const STOPS=[[0,[20,25,23]],[.55,[22,40,46]],[1,[26,54,70]]];
+function sky(t){for(let i=1;i<STOPS.length;i++){const[a,x]=STOPS[i-1],[b,y]=STOPS[i];if(t<=b){const k=(t-a)/(b-a);return x.map((v,j)=>Math.round(v+(y[j]-v)*k))}}return STOPS.at(-1)[1]}
+const hex=c=>'#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
+const esc=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl=u=>/^https?:\/\//.test(u||'')?esc(u):'#';
+const words=t=>t.split(' ').map((w,i)=>`<span class='w'><span style='--d:${60+i*70}ms'>${esc(w)}</span></span>`).join(' ');
+const today=()=>new Date(Date.now()+9*36e5).toISOString().slice(0,10);
+const still=matchMedia('(prefers-reduced-motion:reduce)').matches;
+let shown=null;
+
+function staleNote(date){
+  const days=Math.round((new Date(today())-new Date(date))/864e5);
+  if(days<=0)return '';
+  const[,m,d]=date.split('-').map(Number);
+  return `<p class='stale'>${days===1?'어제':`${m}월 ${d}일`} 브리핑이에요</p>`;
+}
+
+function render(brief){
+  const N=brief.cards,REST=brief.headlines||[],LAST=N.length,KEY='brief-'+brief.date;
+  shown=brief.date;
+  const st=i=>`style='--bg:${hex(sky(i/LAST))};--fg:#e3e2da'`;
+  const note=staleNote(brief.date);
+  const cards=N.map((n,i)=>{const w=n.title.split(' ').length*70,m=n.blocks.length>1;return `<article class='slide' ${st(i)}><div class='body'>${i?'':note}<div class='num'><span>${esc(n.category)}</span>${m?`<span class='dots' aria-hidden='true'>${n.blocks.map((_,k)=>`<i${k?'':" class='cur'"}></i>`).join('')}</span>`:''}</div><h2>${words(n.title)}</h2><div class='blocks'>${n.blocks.map((x,k)=>`<div class='blk${k?'':' cur'}'><p class='sum' style='--d:${k?0:140+w}ms'>${esc(x)}</p>${!k&&m?`<p class='more' style='--d:${260+w}ms'>위로 밀어 더 보기</p>`:''}</div>`).join('')}</div></div><div class='srcs'>${n.sources.map((r,k)=>`<a class='src' href='${safeUrl(r.url)}' target='_blank' rel='noopener' style='--d:${320+w+k*60}ms'>${esc(r.name)}</a>`).join('')}</div></article>`}).join('');
+  const rest=REST.length?`<h3>그 밖의 제목</h3><ul>${REST.map(h=>`<li><a class='row' href='${safeUrl(h.url)}' target='_blank' rel='noopener'>${esc(h.title)}</a></li>`).join('')}</ul>`:'';
+  const end=`<section class='slide end' ${st(LAST)}><div class='body'><h2>${words('오늘 브리핑 끝')}</h2><p class='note'>좋은 하루 보내세요.</p><h3>오늘의 뉴스</h3><ul>${N.map((n,i)=>`<li><button class='row' type='button' data-go='${i}' style='--d:${200+i*35}ms'><b>${i+1}</b><span>${esc(n.title)}</span></button></li>`).join('')}</ul>${rest}<button class='again' type='button' data-go='0'>처음으로</button></div></section>`;
+  deck.innerHTML=cards+end;
+  $('bar').setAttribute('aria-valuemax',LAST+1);
+  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.intersectionRatio>=.55)e.target.classList.add('on');else if(!e.isIntersecting)e.target.classList.remove('on')}),{root:deck,threshold:[0,.55]});
+  document.querySelectorAll('.slide').forEach(e=>io.observe(e));
+  const bio=new IntersectionObserver(es=>es.forEach(e=>{if(e.intersectionRatio<.5)return;const box=e.target.parentElement,k=[...box.children].indexOf(e.target);[...box.children].forEach((c,j)=>c.classList.toggle('cur',j===k));box.closest('.slide').querySelectorAll('.dots i').forEach((d,j)=>d.classList.toggle('cur',j===k))}),{threshold:[.5]});
+  document.querySelectorAll('.blk').forEach(e=>bio.observe(e));
+  const at=()=>Math.round(deck.scrollLeft/(deck.clientWidth||1));
+  const go=(i,b=still?'auto':'smooth')=>deck.scrollTo({left:i*deck.clientWidth,behavior:b});
+  function paint(){
+    const i=at();
+    $('fill').style.width=(i+1)/(LAST+1)*100+'%';
+    $('bar').setAttribute('aria-valuenow',i+1);
+    try{localStorage.setItem(KEY,i)}catch(e){}
+  }
+  deck.addEventListener('scroll',paint,{passive:true});
+  addEventListener('resize',paint);
+  addEventListener('keydown',e=>{if(e.key==='ArrowRight')go(Math.min(at()+1,LAST));if(e.key==='ArrowLeft')go(Math.max(at()-1,0));const box=document.querySelectorAll('.slide')[at()].querySelector('.blocks');if(box&&(e.key==='ArrowDown'||e.key==='ArrowUp'))box.scrollBy({top:(e.key==='ArrowDown'?1:-1)*box.clientHeight,behavior:still?'auto':'smooth'})});
+  deck.addEventListener('click',e=>{const b=e.target.closest('[data-go]');if(b)go(+b.dataset.go)});
+  document.fonts.ready.then(()=>document.querySelectorAll('.srcs').forEach(b=>{const r=b.getBoundingClientRect().right-24;while(b.children.length>1&&b.lastElementChild.getBoundingClientRect().right>r)b.lastElementChild.remove()}));
+  let saved=0;try{saved=+localStorage.getItem(KEY)||0}catch(e){}
+  if(saved)go(Math.min(saved,LAST),'auto');
+  paint();
+}
+
+function message(title,text,retry){
+  deck.innerHTML=`<div class='state' style='flex:0 0 100%'><h2>${title}</h2><p>${text}</p>${retry?"<button class='retry' type='button' id='retry'>다시 시도</button>":''}</div>`;
+  if(retry)$('retry').onclick=()=>location.reload();
+}
+
+async function load(){
+  const r=await fetch('/api/briefing',{cache:'no-store'});
+  if(r.status===401)return{locked:true};
+  if(r.status===404)return{empty:true};
+  if(!r.ok)throw new Error(r.status);
+  return r.json();
+}
+
+load().then(d=>{
+  if(d.locked)return message('전용 주소로 열어 주세요','처음 한 번은 받은 전용 주소로 들어와야 이 브라우저에서 열려요.');
+  if(d.empty)return message('아직 브리핑이 없어요','첫 브리핑이 만들어지면 여기에 나와요.',true);
+  render(d);
+}).catch(()=>message('불러오지 못했어요','인터넷 연결을 확인하고 다시 시도해 주세요.',true));
+
+// 어제 브리핑을 보던 중 오늘 브리핑이 나오면 다시 열었을 때 바꿔 보여 준다.
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!shown||shown===today())return;
+  load().then(d=>{if(d.date&&d.date!==shown)location.reload()}).catch(()=>{});
+});
+</script>
+</body>
+</html>

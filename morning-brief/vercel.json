@@ -1,0 +1,10 @@
+{
+  "rewrites": [{ "source": "/b/:token", "destination": "/api/access?token=:token" }],
+  "headers": [{
+    "source": "/(.*)",
+    "headers": [
+      { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+      { "key": "Referrer-Policy", "value": "no-referrer" }
+    ]
+  }]
+}

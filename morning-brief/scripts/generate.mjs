@@ -3,7 +3,7 @@ import { ask } from "../lib/ai.js";
 import { collect } from "../lib/collect.js";
 import { AUDIENCE } from "../lib/oidc.js";
 import { buildBriefing } from "../lib/pipeline.js";
-import { kstDate, marketWasOpen, windowStart } from "../lib/rules.js";
+import { isMorningFile, kstDate, marketWasOpen, windowStart } from "../lib/rules.js";
 
 const MIN_HEALTHY_FEEDS = 5;
 const BASE_URL = process.env.BRIEF_BASE_URL || "https://morning-news-mockup.vercel.app";
@@ -32,7 +32,8 @@ async function main() {
   const date = kstDate(now);
   const token = await actionsToken();
 
-  if (process.env.FORCE !== "true" && (await ingest(token, {}, `?date=${date}`)).exists) {
+  const { uploadedAt } = await ingest(token, {}, `?date=${date}`);
+  if (process.env.FORCE !== "true" && isMorningFile(uploadedAt, date)) {
     console.log(`${date} briefing already exists, skipping`);
     return;
   }

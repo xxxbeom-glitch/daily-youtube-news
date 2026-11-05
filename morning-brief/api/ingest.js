@@ -12,12 +12,11 @@ const write = (path, body) => put(path, body, {
   cacheControlMaxAge: 60,
 });
 
-async function exists(path) {
+async function uploadedAt(path) {
   try {
-    await head(path);
-    return true;
+    return (await head(path)).uploadedAt;
   } catch (error) {
-    if (error instanceof BlobNotFoundError) return false;
+    if (error instanceof BlobNotFoundError) return null;
     throw error;
   }
 }
@@ -43,7 +42,7 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     const date = String(req.query.date || "");
     if (!DATE.test(date)) return res.status(400).json({ error: "bad date" });
-    return res.status(200).json({ exists: await exists(`briefings/${date}.json`) });
+    return res.status(200).json({ uploadedAt: await uploadedAt(`briefings/${date}.json`) });
   }
   if (req.method !== "POST") return res.status(405).json({ error: "method" });
   const brief = req.body;

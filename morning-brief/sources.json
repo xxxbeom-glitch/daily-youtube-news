@@ -1,0 +1,26 @@
+{
+  "majorOutlets": ["로이터", "블룸버그", "WSJ", "CNBC", "FT", "연합뉴스", "BBC", "뉴욕타임스", "한국경제", "매일경제"],
+  "sources": [
+    { "name": "연합뉴스", "url": "https://www.yna.co.kr/rss/news.xml", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "한겨레", "url": "https://www.hani.co.kr/rss/", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "경향신문", "url": "https://www.khan.co.kr/rss/rssdata/total_news.xml", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "SBS", "url": "https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "JTBC", "url": "https://news-ex.jtbc.co.kr/v1/get/rss/newsflesh", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "매일경제", "url": "https://www.mk.co.kr/rss/30000001/", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "한국경제", "url": "https://www.hankyung.com/feed/all-news", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "구글 뉴스", "url": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko", "region": "domestic", "lang": "ko", "use": "general" },
+    { "name": "BBC", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "가디언", "url": "https://www.theguardian.com/world/rss", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "뉴욕타임스", "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "알자지라", "url": "https://www.aljazeera.com/xml/rss/all.xml", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "NPR", "url": "https://feeds.npr.org/1001/rss.xml", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "로이터", "url": "https://news.google.com/rss/search?q=site:reuters.com+when:1d&hl=en-US&gl=US&ceid=US:en", "region": "overseas", "lang": "en", "use": "general" },
+    { "name": "구글 뉴욕증시", "url": "https://news.google.com/rss/search?q=%EB%89%B4%EC%9A%95%EC%A6%9D%EC%8B%9C+%EB%A7%88%EA%B0%90+when:1d&hl=ko&gl=KR&ceid=KR:ko", "region": "domestic", "lang": "ko", "use": "market" },
+    { "name": "구글 월가", "url": "https://news.google.com/rss/search?q=wall+street+stocks+close+when:1d&hl=en-US&gl=US&ceid=US:en", "region": "overseas", "lang": "en", "use": "market" },
+    { "name": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135", "region": "overseas", "lang": "en", "use": "market" },
+    { "name": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "region": "overseas", "lang": "en", "use": "market" },
+    { "name": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910", "region": "overseas", "lang": "en", "use": "market" },
+    { "name": "연합뉴스", "url": "https://www.yna.co.kr/rss/market.xml", "region": "domestic", "lang": "ko", "use": "market" }
+  ]
+}

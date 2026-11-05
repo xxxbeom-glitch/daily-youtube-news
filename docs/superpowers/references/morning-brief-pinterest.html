@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>아침 뉴스 레퍼런스</title>
+<style>
+:root{--bg:#161c1a;--fg:#e3e2da;--sub:#b4b5ac;--line:#39423e;--sun:#f0b545}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;word-break:keep-all;line-height:1.5}
+main{max-width:1120px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:clamp(34px,8vw,52px);line-height:1.15;letter-spacing:-.04em;margin:0 0 10px}
+.lead{margin:0;color:var(--sub);font-size:17px;max-width:60ch}
+section{margin-top:44px;border-top:1px solid var(--line);padding-top:18px}
+h2{font-size:26px;letter-spacing:-.03em;margin:0 0 4px}
+section>p{margin:0 0 16px;color:var(--sub);font-size:16px;max-width:60ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;align-items:start}
+a{display:block;color:inherit;border-radius:10px;overflow:hidden;background:#222a27}
+a:focus-visible{outline:2px solid var(--sun);outline-offset:2px}
+img{display:block;width:100%;height:auto}
+</style>
+</head>
+<body>
+<main>
+<h1>아침 뉴스 레퍼런스</h1>
+<p class="lead">핀터레스트에서 7개 검색어로 218개를 모아 38개를 골랐어요. 그림을 누르면 원본 핀으로 가요.</p>
+<div id="board"></div>
+</main>
+<script>
+const G=[
+['아침 하늘색','새벽에서 맑은 하늘로 밝아지는 우리 컨셉과 가장 가까워요. 색 단계와 해의 위치를 볼 때 참고해요.',[
+['350928995986590457','98/f7/ea/98f7eaa1261ee2c1a73ac9d0d65d0a6a'],['474989091972345113','ae/5e/11/ae5e117d9a246f6a897a98d9fe448362'],['1098174690415330857','2e/fc/ff/2efcff5dfe8fe953325361a566c926f8'],['775463629630360962','f4/aa/63/f4aa631814e85228a373a29a5a4f4a5b'],['693202567673039491','83/99/c6/8399c6370886eefa0323010f8e03045b'],['968836938587206623','35/ca/ef/35caef32fc4ae733e7a5baf65bcaffe5'],['779615385540956303','15/30/2a/15302a3f8ef0aa7db97713303eee5a13'],['891572057505480444','22/51/93/225193f9aa74607f3e759bd2bbf0ca97'],['539798705327159611','19/20/78/192078f343bd1b338ae932690ec5e0c0'],['267964246572407527','a6/53/95/a653957518f2be390cbda46a7734383c'],['1017954322031843294','95/f6/40/95f640228005a1672a0dd4bf5985620c']]],
+['크고 볼드한 타이포','글자 자체가 화면을 채우는 예시예요. 이번에 키운 제목의 크기와 무게를 더 밀어볼 때 기준이 돼요.',[
+['382524562117950765','d6/7f/1a/d67f1a02c41cab021b84f0e027d00695'],['321163017201708918','fb/4b/1c/fb4b1cc46329dc35ead516d3eebf3ce4'],['437904763786871964','c0/2b/ef/c02bef87144f0398b56c1b30e4191eb8'],['291185932178990805','98/29/25/9829258c6686f2091404fa01a6387952'],['511510470190400659','e6/fa/c3/e6fac3a121622b0b094f33024dafd2fc'],['876864989959780760','a6/a1/4f/a6a14f8e3095f1828b494b31011b17d4'],['796714990376657624','0e/32/0a/0e320aac04d5de64176415eac32f56f8'],['1113374339134095832','5a/91/c2/5a91c27b15aac4379a88cb692e8f53a2'],['965037026421630498','dc/28/c6/dc28c6b402018864dff2f591b3ce5055'],['1151303092280393477','89/81/09/8981092c17cc0c90656c36a4f4cfb2a3'],['1147292073900667554','26/67/bc/2667bc69ebc6d30a3669ebe2e79ac132']]],
+['해와 원 도형','표지의 해처럼 큰 원 하나로 화면을 잡는 구성이에요. 평면 색과 함께 쓴 예시 위주예요.',[
+['375628425192628632','46/ba/76/46ba764c1094b27a567f4df8189788a3'],['221943087867899188','b6/f5/a9/b6f5a950d08fba8f2e569e3d3d0315d5'],['504895808216035759','51/98/b7/5198b702eebbc107479737c0219da62d'],['960322320528592301','e3/11/00/e31100610c68306bd82a0a0192d24b26'],['91338698668476303','1e/e3/21/1ee32107e375936d8bff2e86ea6d5a08'],['460070918184717670','f6/3f/a8/f63fa8a97518d20026e4d6e14058a306']]],
+['큰 날짜와 하루 요약','첫 화면에서 날짜를 크게 쓰고 오늘 할 일을 문장으로 알려주는 구성이에요. 표지에 가까워요.',[
+['122300946127911008','77/cd/10/77cd103a96843932b562d5f5076c142e'],['1114852082787360095','20/f7/66/20f7665b120402be5812759df5ea897f'],['674484481735170609','11/ad/4c/11ad4c6db2b2ebe4dae1676c9d9a4229'],['1127729562961474771','4a/c5/9a/4ac59ade2bd80b6f86d41d1b7ef8c35d']]],
+['한 장에 하나씩 읽기','한 화면에 글 하나를 크게 놓는 구성이에요. 뉴스 카드의 제목과 본문 간격을 볼 때 참고해요.',[
+['478577897906916357','92/0a/27/920a27517c8ea46160497c2446c09ef5'],['1073053048738460289','37/9d/e8/379de8e308a6f2e37729b7a576279479'],['1110770695652436114','fa/94/a1/fa94a1df4fc0643edcfd4d9bf0f781ab'],['488429522111003411','89/4b/6d/894b6d10790278b0d5b34f62de7389eb'],['638948265899037570','85/02/b7/8502b788181deffca89cb23df004b5d2'],['520236194450696737','90/25/db/9025dbe47a0623e8f6b27ad7bac4a377']]]
+];
+document.getElementById('board').innerHTML=G.map(([t,d,p])=>`<section><h2>${t}</h2><p>${d}</p><div class="grid">${p.map(([id,s],i)=>`<a href="https://kr.pinterest.com/pin/${id}/" target="_blank" rel="noopener" aria-label="${t} 레퍼런스 ${i+1}"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="https://i.pinimg.com/236x/${s}.jpg"></a>`).join('')}</div></section>`).join('');
+</script>
+</body>
+</html>

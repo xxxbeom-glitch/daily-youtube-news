@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  isKospiCluster, kospiIsBigNews, kstDate, limitMarketCards, limitOverseas, marketWasOpen, normalizeBlocks,
+  isKospiCluster, isMorningFile, kospiIsBigNews, kstDate, limitMarketCards, limitOverseas, marketWasOpen, normalizeBlocks,
   orderWithDiversity, pickSources, windowStart,
 } from "../lib/rules.js";
 
@@ -107,4 +107,10 @@ test("일요일과 월요일 아침, 휴장일 다음 날은 시황이 없다", 
   assert.equal(marketWasOpen(at("2026-11-08"), []), false);
   assert.equal(marketWasOpen(at("2026-11-09"), []), false);
   assert.equal(marketWasOpen(at("2026-11-27"), ["2026-11-26"]), false);
+});
+
+test("06시 이전에 만든 파일은 아침 실행이 다시 만든다", () => {
+  assert.equal(isMorningFile(null, "2026-11-06"), false);
+  assert.equal(isMorningFile("2026-11-05T16:07:00.000Z", "2026-11-06"), false);
+  assert.equal(isMorningFile("2026-11-05T22:15:00.000Z", "2026-11-06"), true);
 });

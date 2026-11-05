@@ -152,6 +152,9 @@ export const kstIso = (date = new Date()) => `${new Date(date.getTime() + 9 * 36
 // 수집 구간 시작: 전날 18:00 KST.
 export const windowStart = (now = new Date()) => new Date(new Date(`${kstDate(now)}T18:00:00+09:00`).getTime() - 86400e3);
 
+// 뉴욕증시 마감 기사가 들어가기 전에 만든 파일은 그날 아침 브리핑으로 치지 않는다.
+export const isMorningFile = (uploadedAt, date) => Boolean(uploadedAt) && new Date(uploadedAt) >= new Date(`${date}T06:00:00+09:00`);
+
 // 한국 아침 기준으로 전날(미국 현지 날짜)에 뉴욕증시가 열렸는지 확인한다.
 export function marketWasOpen(now, holidays) {
   const us = new Date(new Date(`${kstDate(now)}T00:00:00Z`).getTime() - 86400e3);

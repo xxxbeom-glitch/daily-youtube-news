@@ -27,6 +27,14 @@
     { "name": "CNBC", "url": "https://www.cnbc.com/sitemap_news.xml", "region": "overseas", "lang": "en" },
     { "name": "가디언", "url": "https://www.theguardian.com/sitemaps/news.xml", "region": "overseas", "lang": "en" }
   ],
+  "pages": [
+    { "outlet": "매일경제", "url": "https://www.mk.co.kr/news/world", "mode": "labels", "link": "/news/[a-z]+/\\d{6,}" },
+    { "outlet": "매일경제", "url": "https://www.mk.co.kr/news/stock", "mode": "labels", "link": "/news/[a-z]+/\\d{6,}" },
+    { "outlet": "한국경제", "url": "https://www.hankyung.com/globalmarket", "mode": "order", "link": "hankyung\\.com/article/" },
+    { "outlet": "CNBC", "url": "https://www.cnbc.com/economy/", "mode": "order", "link": "/20\\d\\d/\\d\\d/\\d\\d/" },
+    { "outlet": "CNBC", "url": "https://www.cnbc.com/markets/", "mode": "order", "link": "/20\\d\\d/\\d\\d/\\d\\d/" },
+    { "outlet": "가디언", "url": "https://www.theguardian.com/us/business", "mode": "order", "link": "/20\\d\\d/[a-z]{3}/\\d\\d/" }
+  ],
   "domesticOutlets": ["매일경제", "한국경제"],
   "naverQueries": ["뉴욕증시", "미국 증시", "나스닥", "연준 금리", "미국 고용", "미국 물가", "미국 국채 금리", "달러 환율 미국", "엔비디아 실적", "미국 관세 경제"]
 }

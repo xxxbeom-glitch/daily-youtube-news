@@ -6,6 +6,7 @@ import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
 import { articleKey, parseSitemap, usCandidate } from "./lists.js";
 import { runLab } from "./pipeline.js";
+import { mergePlacements, readPlacements } from "./placements.js";
 
 const SITE = process.env.LAB_URL || "https://morning-brief-lab.vercel.app";
 const AUDIENCE = "morning-brief-lab";
@@ -19,7 +20,7 @@ async function actionsToken() {
   return (await response.json()).value;
 }
 
-async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries }, now) {
+async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries }, now, placed) {
   const since = windowStart(now).getTime();
   const log = [];
   const lists = await Promise.all(feeds.map(async (feed) => {
@@ -51,7 +52,8 @@ async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries
       const response = await fetch(outlet.url, { headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(20000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const items = parseSitemap(await response.text(), outlet);
-      const kept = items.filter(usCandidate);
+      // 경제 페이지 윗칸의 기사는 제목에 단어가 없어도 후보로 둔다.
+      const kept = items.filter((item) => usCandidate(item) || placed.has(articleKey(item.url)));
       log.push({ name: outlet.name, via: "목록", received: items.length, kept: kept.length });
       lists.push(kept);
     } catch (error) {
@@ -79,12 +81,18 @@ async function main() {
   const now = new Date();
   const started = Date.now();
   const config = JSON.parse(await readFile(new URL("./sources.json", import.meta.url), "utf8"));
-  const { items, log, since } = await collectAll(config, now);
-  console.log(`collected ${items.length} items from ${log.length} sources`);
-  for (const row of log) if (row.error) console.warn(`source failed: ${row.via} ${row.error}`);
+  const wait = () => new Promise((done) => setTimeout(done, READ_GAP_MS));
+  const { placements, log: pageLog } = await readPlacements(config.pages, { wait });
+  const collected = await collectAll(config, now, new Set(placements.map((row) => row.key)));
+  const { log, since } = collected;
+  const items = mergePlacements(collected.items, placements);
+  log.push(...pageLog);
+  const placedCount = items.filter((item) => item.placement.top.length + item.placement.major.length).length;
+  console.log(`collected ${items.length} items from ${log.length} sources, placed ${placedCount}`);
+  for (const row of log) if (row.error || row.status === "robots") console.warn(`source failed: ${row.via} ${row.error || row.status}`);
 
   const read = articleReader();
-  const lab = await runLab({ items, ask, read, now, wait: () => new Promise((done) => setTimeout(done, READ_GAP_MS)) });
+  const lab = await runLab({ items, ask, read, now, wait });
 
   // 공개 저장소의 로그이므로 기사 내용은 남기지 않고 개수만 남긴다.
   const reads = lab.results.flatMap((row) => row.reads);

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { ask } from "../lib/ai.js";
 import { collect } from "../lib/collect.js";
 import { AUDIENCE } from "../lib/oidc.js";
+import { naverKeys } from "../lib/naver.js";
 import { buildBriefing } from "../lib/pipeline.js";
 import { isMorningFile, kstDate, marketWasOpen, windowStart } from "../lib/rules.js";
 
@@ -38,11 +39,15 @@ async function main() {
     return;
   }
 
-  const [{ sources, majorOutlets }, { topics }, { dates: holidays }] = await Promise.all([
+  const [{ sources, majorOutlets }, { topics, naverTopics }, { dates: holidays }] = await Promise.all([
     load("sources.json"), load("topics.json"), load("market-holidays.json"),
   ]);
-  const { items, sourceErrors, healthyGeneral } = await collect({ sources, topics, now, since: windowStart(now) });
-  console.log(`collected ${items.length} items, ${healthyGeneral} healthy general feeds`);
+  const { items, sourceErrors, healthyGeneral } = await collect({
+    sources, topics, naverTopics, naverKeys: naverKeys(), now, since: windowStart(now),
+  });
+  const fromNaver = items.filter((i) => i.via === "naver").length;
+  const withDesc = items.filter((i) => i.desc).length;
+  console.log(`collected ${items.length} items (${fromNaver} from Naver, ${withDesc} with description), ${healthyGeneral} healthy general feeds`);
   for (const failure of sourceErrors) console.warn(`feed failed: ${failure.name}: ${failure.error}`);
   if (healthyGeneral < MIN_HEALTHY_FEEDS) throw new Error(`Only ${healthyGeneral} general feeds healthy`);
 

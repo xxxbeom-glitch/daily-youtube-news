@@ -32,5 +32,17 @@
     { "name": "북한", "card": "일반 뉴스", "lang": "ko", "query": "북한" },
     { "name": "감염병", "card": "일반 뉴스", "lang": "ko", "query": "감염병" },
     { "name": "IT 기기", "card": "일반 뉴스", "lang": "ko", "query": "스마트폰 신제품 IT 기기" }
+  ],
+  "naverTopics": [
+    { "name": "뉴욕증시", "card": "미국 시황", "query": "뉴욕증시" },
+    { "name": "코스피", "card": "기업 공통", "query": "코스피" },
+    { "name": "환율", "card": "환율·원자재", "query": "원달러 환율" },
+    { "name": "국제유가", "card": "환율·원자재", "query": "국제유가" },
+    { "name": "반도체", "card": "반도체", "query": "삼성전자 SK하이닉스" },
+    { "name": "AI", "card": "AI 기업", "query": "엔비디아 오픈AI" },
+    { "name": "외교안보", "card": "일반 뉴스", "query": "외교 안보" },
+    { "name": "북한", "card": "일반 뉴스", "query": "북한" },
+    { "name": "사회", "card": "일반 뉴스", "query": "경찰 구속영장" },
+    { "name": "정치", "card": "일반 뉴스", "query": "국회 대통령" }
   ]
 }

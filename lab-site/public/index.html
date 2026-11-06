@@ -79,7 +79,7 @@ function sources(r) {
 function events(r) {
   const byId = new Map(r.collected.map((i) => [i.id, i]));
   return `<div class="table"><table><tr><th>순위</th><th>사건</th><th class="num">점수</th><th class="num">영향</th><th class="num">언론사</th><th class="num">기사</th></tr>
-  ${r.events.map((e, i) => `<tr><td>${i + 1}</td><td><details><summary>${esc(e.title)}</summary><p class="sub">${esc(e.reason)}</p>${e.ids.map((id) => `<p class="sub">${esc(byId.get(id)?.source)} · ${esc(byId.get(id)?.title)}</p>`).join("")}</details></td><td class="num">${e.score}</td><td class="num">${e.impact}</td><td class="num">${e.outlets.length}</td><td class="num">${e.ids.length}</td></tr>`).join("")}</table></div>`;
+  ${r.events.map((e, i) => `<tr><td>${i + 1}</td><td><details><summary>${esc(e.title)}</summary><p class="sub">${esc(e.reason)}</p>${e.merged?.length ? `<p class="sub">합친 사건: ${esc(e.merged.join(", "))}</p>` : ""}${e.ids.map((id) => `<p class="sub">${esc(byId.get(id)?.source)} · ${esc(byId.get(id)?.title)}</p>`).join("")}</details></td><td class="num">${e.score}</td><td class="num">${e.impact}</td><td class="num">${e.outlets.length}</td><td class="num">${e.ids.length}</td></tr>`).join("")}</table></div>`;
 }
 
 function trace(row) {
@@ -103,7 +103,7 @@ function usage(r) {
     const found = totals.get(row.stage) || { calls: 0, input: 0, output: 0 };
     totals.set(row.stage, { calls: found.calls + 1, input: found.input + row.input, output: found.output + row.output });
   }
-  const names = { group: "사건 묶기", attach: "빠진 기사 다시 붙이기", claims: "주장 추출", write: "카드 작성", verify: "문장 검증", fix: "틀린 문장 고치기" };
+  const names = { group: "사건 묶기", attach: "빠진 기사 다시 붙이기", merge: "나뉜 사건 합치기", claims: "주장 추출", write: "카드 작성", verify: "문장 검증", fix: "틀린 문장 고치기" };
   return `<div class="table"><table><tr><th>단계</th><th class="num">호출</th><th class="num">입력 토큰</th><th class="num">출력 토큰</th></tr>${[...totals].map(([stage, t]) => `<tr><td>${esc(names[stage] || stage)}</td><td class="num">${t.calls}</td><td class="num">${t.input.toLocaleString()}</td><td class="num">${t.output.toLocaleString()}</td></tr>`).join("")}</table></div>`;
 }
 

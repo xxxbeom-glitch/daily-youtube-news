@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { collapseDuplicates, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { collapseDuplicates, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -19,6 +19,22 @@ test("기사 수가 아니라 언론사 수로 점수를 낸다", () => {
   assert.equal(many.outlets.length, 1);
   assert.equal(spread.outlets.length, 3);
   assert.ok(spread.score > many.score);
+});
+
+test("나뉜 사건을 합치면 기사는 겹치지 않고 언론사 수로 다시 점수를 낸다", () => {
+  const one = (n, source) => ({ ...item(n, source, `t${n}`), copies: [item(n, source, `t${n}`)] });
+  const events = [
+    { title: "증시 급락", impact: 4, items: [one(1, "A"), one(2, "B")] },
+    { title: "다른 일", impact: 4, items: [one(3, "C"), one(4, "D"), one(5, "E")] },
+    { title: "국채로 이동", impact: 5, items: [one(2, "B"), one(6, "F")] },
+  ];
+  const merged = mergeEvents(events, [{ keep: 0, absorb: [2, 9, 0] }], new Date());
+  assert.equal(merged.length, 2);
+  const market = merged.find((event) => event.title === "증시 급락");
+  assert.equal(market.items.length, 3);
+  assert.equal(market.impact, 5);
+  assert.deepEqual(market.merged, ["국채로 이동"]);
+  assert.equal(merged[0].title, "증시 급락");
 });
 
 test("읽을 기사는 언론사가 겹치지 않고 국내외를 섞는다", () => {

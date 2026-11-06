@@ -1,7 +1,8 @@
-import { ATTACH, CLAIMS, FIX, GROUP, VERIFY, WRITE } from "./prompts.js";
+import { ATTACH, CLAIMS, FIX, GROUP, MERGE, VERIFY, WRITE } from "./prompts.js";
 
 export const MAX_EVENTS = 6;
 export const READ_PER_EVENT = 3;
+const MERGE_POOL = 12;
 const TRY_PER_EVENT = 6;
 const DUPLICATE = 0.6;
 const BODY_LIMIT = 9000;
@@ -51,6 +52,29 @@ export function scoreEvent(event, now) {
     fresh: hours <= 6 ? 3 : 0,
   };
   return { outlets: [...outlets], parts, score: Object.values(parts).reduce((sum, value) => sum + value, 0) };
+}
+
+const rank = (events, now) => events.map((event) => ({ ...event, ...scoreEvent(event, now) })).sort((a, b) => b.score - a.score);
+
+// 같은 사건으로 판정된 묶음을 합친다. 기사는 겹치지 않게 모으고 점수는 다시 계산한다.
+export function mergeEvents(events, merges, now) {
+  const absorbed = new Set();
+  const merged = events.map((event, index) => {
+    const row = merges.find((item) => Number(item.keep) === index);
+    if (!row || absorbed.has(index)) return event;
+    const others = (row.absorb || []).map(Number).filter((other) => other !== index && events[other] && !absorbed.has(other));
+    if (!others.length) return event;
+    others.forEach((other) => absorbed.add(other));
+    const parts = others.map((other) => events[other]);
+    const items = [...new Map([event, ...parts].flatMap((part) => part.items).map((item) => [item.id, item])).values()];
+    return {
+      ...event,
+      items,
+      impact: Math.max(event.impact, ...parts.map((part) => part.impact)),
+      merged: [...(event.merged || []), ...parts.map((part) => part.title)],
+    };
+  });
+  return rank(merged.filter((_, index) => !absorbed.has(index)), now);
 }
 
 // 언론사가 겹치지 않게, 국내외가 섞이게, 속보보다 내용이 있어 보이는 기사를 먼저 고른다.
@@ -188,13 +212,21 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   }
   const byId = new Map(collapsed.map((item) => [item.id, item]));
   const seen = new Set();
-  const events = grouped.map((event) => {
+  const sorted = grouped.map((event) => {
     const members = (event.ids || []).map((id) => byId.get(Number(id))).filter((item) => item && !seen.has(item.id));
     members.forEach((item) => seen.add(item.id));
     return { title: String(event.title || ""), impact: Number(event.impact) || 1, reason: String(event.reason || ""), items: members };
-  }).filter((event) => event.title && event.items.length)
-    .map((event) => ({ ...event, ...scoreEvent(event, now) }))
-    .sort((a, b) => b.score - a.score);
+  }).filter((event) => event.title && event.items.length);
+
+  // 전체를 한 번에 묶으면 같은 사건이 나뉠 때가 있어, 순위 상위 사건끼리 다시 비교한다.
+  let events = rank(sorted, now);
+  if (events.length > 1) {
+    const pool = events.slice(0, MERGE_POOL);
+    const { merges = [] } = await ask("merge", MERGE, {
+      events: pool.map((event, e) => ({ e, title: event.title, reason: event.reason, articles: event.items.slice(0, 8).map((item) => item.title) })),
+    });
+    events = mergeEvents([...pool, ...events.slice(MERGE_POOL)], merges, now);
+  }
 
   const chosen = events.slice(0, MAX_EVENTS);
   const built = [];

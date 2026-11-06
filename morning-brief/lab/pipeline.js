@@ -77,6 +77,20 @@ export function mergeEvents(events, merges, now) {
   return rank(merged.filter((_, index) => !absorbed.has(index)), now);
 }
 
+// 같은 주제의 사건은 가장 높은 순위 하나만 카드로 만든다. 주제가 없는 사건은 제한하지 않는다.
+export function pickEvents(events, limit = MAX_EVENTS) {
+  const used = new Set();
+  const picked = [];
+  for (const event of events) {
+    if (picked.length >= limit) break;
+    const topic = compact(event.topic);
+    if (topic && used.has(topic)) continue;
+    if (topic) used.add(topic);
+    picked.push(event);
+  }
+  return picked;
+}
+
 // 해외 기사부터, 언론사가 겹치지 않게, 국내외가 섞이게, 속보보다 내용이 있어 보이는 기사를 먼저 고른다.
 export function readingOrder(items) {
   const domestic = (item) => Number(item.region !== "overseas");
@@ -283,13 +297,14 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   let events = rank(sorted, now);
   if (events.length > 1) {
     const pool = events.slice(0, MERGE_POOL);
-    const { merges = [] } = await ask("merge", MERGE, {
+    const { merges = [], topics = [] } = await ask("merge", MERGE, {
       events: pool.map((event, e) => ({ e, title: event.title, reason: event.reason, articles: event.items.slice(0, 8).map((item) => item.title) })),
     });
-    events = mergeEvents([...pool, ...events.slice(MERGE_POOL)], merges, now);
+    const labelled = pool.map((event, e) => ({ ...event, topic: String(topics.find((row) => Number(row.e) === e)?.topic || "") }));
+    events = mergeEvents([...labelled, ...events.slice(MERGE_POOL)], merges, now);
   }
 
-  const chosen = events.slice(0, MAX_EVENTS);
+  const chosen = pickEvents(events);
   const built = [];
   for (const event of chosen) built.push({ event, reads: await readEvent(event, read, wait) });
   const written = await Promise.all(built.map(async ({ event, reads }) => {

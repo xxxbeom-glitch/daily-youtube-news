@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { collapseDuplicates, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -152,6 +152,14 @@ test("짚어볼 점은 물음이어야 하고 사건 이름이 검증에 전달�
   assert.equal(lines[1].passed, true);
   assert.equal(lines[2].passed, false);
   assert.deepEqual(seen, ["금리 동결"]);
+});
+
+test("같은 주제는 가장 높은 순위 하나만 고르고 주제 없는 사건은 제한하지 않는다", () => {
+  const events = [
+    { title: "a", topic: "데이터센터" }, { title: "b", topic: "데이터 센터" }, { title: "c", topic: "관세" },
+    { title: "d", topic: "" }, { title: "e", topic: "" }, { title: "f", topic: "연준" },
+  ];
+  assert.deepEqual(pickEvents(events, 4).map((row) => row.title), ["a", "c", "d", "e"]);
 });
 
 test("앞 카드와 되풀이되는 문장은 뒤 카드에서 빼고 첫 문장은 남긴다", () => {

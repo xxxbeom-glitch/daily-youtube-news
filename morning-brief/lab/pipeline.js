@@ -141,7 +141,9 @@ export function koreanUnits(text) {
       return `${koreanAmount(value)}${dollar || word ? "달러" : ""}`;
     })
     .replace(/(\d+\.\d+)조/g, (_, number) => koreanAmount(Math.round(Number(number) * 1e12)))
-    .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1달러");
+    .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1달러")
+    .replace(/gallons?/gi, "갤런")
+    .replace(/basis points?/gi, "베이시스포인트");
 }
 
 // 대문자 약어(AI, PCE, S&P)는 두고, 한글로 쓸 수 있는 영어 이름만 찾는다.
@@ -206,7 +208,7 @@ async function checkLines(lines, event, ask) {
     if (line.numbers.length) problems.push(`근거에 없는 숫자: ${line.numbers.join(", ")}`);
     if (result?.ok === false) problems.push(result.reason || "근거와 맞지 않음");
     if (!result) problems.push("검사 결과 없음");
-    if (line.kind === "doubt" && !/\?\s*$/.test(line.text)) problems.push("물음 형태가 아님");
+    if (line.kind === "doubt" && !/요\?\s*$/.test(line.text)) problems.push("해요체 물음이 아님");
     return { ...line, problems, passed: !problems.length };
   });
 }

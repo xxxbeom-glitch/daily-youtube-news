@@ -50,6 +50,8 @@ test("영어 금액 단위를 코드로 바꾼다", () => {
   assert.equal(koreanUnits("$4 billion in sales"), "40억달러 in sales");
   assert.equal(koreanUnits("주가는 $115.16였다"), "주가는 115.16달러였다");
   assert.equal(koreanUnits("3.2조달러 이상"), "3조2000억달러 이상");
+  assert.equal(koreanUnits("1000만 gallons의 물"), "1000만 갤런의 물");
+  assert.equal(koreanUnits("1,100 basis points를 넘었다"), "1,100 베이시스포인트를 넘었다");
   assert.equal(koreanUnits("5.5% 하락"), "5.5% 하락");
 });
 

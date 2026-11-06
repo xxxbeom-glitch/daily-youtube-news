@@ -142,8 +142,8 @@ export function koreanUnits(text) {
     })
     .replace(/(\d+\.\d+)조/g, (_, number) => koreanAmount(Math.round(Number(number) * 1e12)))
     .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1달러")
-    .replace(/gallons?/gi, "갤런")
-    .replace(/basis points?/gi, "베이시스포인트");
+    .replace(/\bgallons?\b/gi, "갤런")
+    .replace(/\bbasis points?\b/gi, "베이시스포인트");
 }
 
 // 대문자 약어(AI, PCE, S&P)는 두고, 한글로 쓸 수 있는 영어 이름만 찾는다.

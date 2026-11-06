@@ -121,7 +121,7 @@ function koreanAmount(value) {
 // 영어 금액 단위는 AI가 아니라 코드가 바꾼다. 계산 실수가 숫자 대조를 통과하지 못하게 하기 위해서다.
 export function koreanUnits(text) {
   return String(text || "")
-    .replace(/(US)?(\$)?\s?(\d[\d,]*(?:\.\d+)?)\s?(tn|trillion|bn|billion|mn|million)\b(?:\s?(달러|dollars?))?/gi, (_, us, dollar, number, unit, word) => {
+    .replace(/((?:US)?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s?(tn|trillion|bn|billion|mn|million)\b(?:\s?(달러|dollars?))?/gi, (_, dollar, number, unit, word) => {
       const value = Math.round(Number(number.replace(/,/g, "")) * UNITS[unit.toLowerCase()]);
       return `${koreanAmount(value)}${dollar || word ? "달러" : ""}`;
     })

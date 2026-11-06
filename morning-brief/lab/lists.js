@@ -23,3 +23,15 @@ export function parseSitemap(xml, outlet) {
 }
 
 export const usCandidate = (item) => US_TITLE.test(item.title);
+
+// 공개 로그에 남길 개수만 모은다. 기사 제목이나 내용은 넣지 않는다.
+export function countSummary(items, log) {
+  const outlets = {};
+  for (const item of items) outlets[item.source] = (outlets[item.source] || 0) + 1;
+  return {
+    outlets,
+    listCandidates: log.filter((row) => row.via === "목록").reduce((sum, row) => sum + (row.kept || 0), 0),
+    placed: items.filter((item) => item.placement.top.length + item.placement.major.length).length,
+    pageFailures: log.filter((row) => row.via === "편집 위치" && row.status !== "ok").length,
+  };
+}

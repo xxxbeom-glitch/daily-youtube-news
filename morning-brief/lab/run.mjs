@@ -4,7 +4,7 @@ import { parseFeed } from "../lib/rss.js";
 import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
 import { claudeAsk, usageLog } from "./claude.js";
-import { articleKey, parseSitemap, usCandidate } from "./lists.js";
+import { articleKey, countSummary, parseSitemap, usCandidate } from "./lists.js";
 import { runLab } from "./pipeline.js";
 import { mergePlacements, readPlacements } from "./placements.js";
 
@@ -87,8 +87,7 @@ async function main() {
   const { log, since } = collected;
   const items = mergePlacements(collected.items, placements);
   log.push(...pageLog);
-  const placedCount = items.filter((item) => item.placement.top.length + item.placement.major.length).length;
-  console.log(`collected ${items.length} items from ${log.length} sources, placed ${placedCount}`);
+  console.log(`collected ${items.length} items from ${log.length} sources: ${JSON.stringify(countSummary(items, log))}`);
   for (const row of log) if (row.error || row.status === "robots") console.warn(`source failed: ${row.via} ${row.error || row.status}`);
 
   const read = articleReader();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { articleKey, parseSitemap, usCandidate } from "../lab/lists.js";
+import { articleKey, countSummary, parseSitemap, usCandidate } from "../lab/lists.js";
 
 const outlet = { name: "CNBC", region: "overseas", lang: "en" };
 
@@ -25,4 +25,21 @@ test("제목으로 미국 경제 후보만 남긴다", () => {
 test("추적값과 끝 슬래시가 달라도 같은 기사로 본다", () => {
   assert.equal(articleKey("https://www.mk.co.kr/news/world/1/?a=1"), articleKey("https://mk.co.kr/news/world/1"));
   assert.notEqual(articleKey("https://mk.co.kr/news/world/1"), articleKey("https://mk.co.kr/news/world/2"));
+});
+
+test("언론사별 수집 수와 목록 후보, 편집 위치, 페이지 실패를 개수로 센다", () => {
+  const items = [
+    { source: "CNBC", title: "비밀 제목", placement: { top: ["CNBC"], major: [] } },
+    { source: "CNBC", title: "다른 제목", placement: { top: [], major: [] } },
+    { source: "매일경제", title: "제목", placement: { top: [], major: ["매일경제"] } },
+  ];
+  const log = [
+    { name: "CNBC", via: "목록", received: 90, kept: 7 },
+    { name: "매일경제", via: "목록", received: 50, kept: 4 },
+    { name: "한국경제", via: "목록", error: "HTTP 500" },
+    { name: "CNBC", via: "편집 위치", status: "ok", received: 12 },
+    { name: "가디언", via: "편집 위치", status: "failed", error: "timeout" },
+    { name: "매일경제", via: "편집 위치", status: "robots" },
+  ];
+  assert.deepEqual(countSummary(items, log), { outlets: { CNBC: 2, 매일경제: 1 }, listCandidates: 11, placed: 2, pageFailures: 2 });
 });

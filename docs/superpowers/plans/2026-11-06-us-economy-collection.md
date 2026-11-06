@@ -6,7 +6,7 @@
 
 **Architecture:** `lab/lists.js`가 공개 목록을, `lab/placements.js`가 편집 페이지의 기사 위치를 읽는다. `run.mjs`가 둘을 기존 수집에 합치고, `pipeline.js`는 위치와 언론사 수로 점수를 낸다. AI는 미국 경제 판정과 사건 묶기만 맡는다.
 
-**Tech Stack:** Node 24, ES 모듈, cheerio, `node --test`, GitHub Actions, Vercel.
+**Tech Stack:** Node 24, ES 모듈, cheerio, `@anthropic-ai/sdk`(Claude Haiku 5.5), `node --test`, GitHub Actions, Vercel.
 
 **Spec:** `docs/superpowers/specs/2026-11-06-us-economy-collection-design.md`
 

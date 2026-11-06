@@ -1,0 +1,37 @@
+name: Brief lab
+
+on:
+  push:
+    branches: [lab/us-economy]
+    paths:
+      - "morning-brief/lab/**"
+      - "morning-brief/lib/ai.js"
+      - ".github/workflows/brief-lab.yml"
+
+concurrency:
+  group: brief-lab
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: morning-brief
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: node lab/run.mjs
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NAVER_API_KEY_ID: ${{ secrets.NAVER_API_KEY_ID }}
+          NAVER_API_KEY: ${{ secrets.NAVER_API_KEY }}

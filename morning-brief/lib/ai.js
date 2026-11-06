@@ -1,5 +1,8 @@
 const MODEL = process.env.BRIEF_MODEL || "gpt-5.6-luna";
 
+// 시험 페이지가 단계별 사용량을 보여줄 수 있게 남긴다.
+export const usageLog = [];
+
 export function parseModelJson(text) {
   const cleaned = String(text).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
   const first = cleaned.indexOf("{");
@@ -42,6 +45,7 @@ export async function ask(stage, instructions, payload) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const { parsed, usage } = await once(instructions, payload);
+      usageLog.push({ stage, input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0 });
       console.log(`${stage}: in ${usage?.input_tokens ?? "?"} / out ${usage?.output_tokens ?? "?"} tokens`);
       return parsed;
     } catch (error) {

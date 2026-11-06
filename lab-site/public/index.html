@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>브리핑 과정 확인</title>
+<style>
+:root{--bg:#f6f6f3;--panel:#fff;--ink:#1c1f1d;--sub:#5e6560;--line:#dfe1dc;--ok:#1d7a4d;--bad:#b3362b;--warn:#92620a;--accent:#1f5fa8}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#141716;--panel:#1d2120;--ink:#e6e7e2;--sub:#a0a7a2;--line:#333937;--ok:#58c08c;--bad:#ee8378;--warn:#e0b050;--accent:#7fb2ec}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;word-break:keep-all;overflow-wrap:anywhere}
+main{max-width:860px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:24px;margin:0 0 4px}
+h2{font-size:19px;margin:36px 0 10px}
+h3{font-size:16px;margin:0}
+p{margin:6px 0}
+a{color:var(--accent)}
+.sub{color:var(--sub);font-size:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:14px}
+.flow div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+.flow b{display:block;font-size:22px;line-height:1.2}
+.table{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--sub);font-weight:600;white-space:nowrap}
+.num{text-align:right;white-space:nowrap}
+details{margin:8px 0}
+summary{cursor:pointer;font-weight:600}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:0 6px;border:1px solid currentColor;border-radius:4px;margin-right:4px;white-space:nowrap}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.line{padding:8px 0;border-top:1px solid var(--line)}
+.line:first-child{border-top:0}
+.line.fail .text{text-decoration:line-through;color:var(--sub)}
+.quote{border-left:3px solid var(--line);padding-left:10px;color:var(--sub);font-size:14px;margin:4px 0}
+.body{max-height:320px;overflow:auto;font-size:14px;color:var(--sub);white-space:pre-wrap}
+.compare{display:grid;gap:10px;grid-template-columns:1fr}
+@media (min-width:700px){.compare{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<main id="app"><p class="sub">불러오는 중이에요.</p></main>
+<script>
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const safeUrl = (url) => (/^https?:\/\//.test(url || "") ? esc(url) : "#");
+const time = (ms) => new Date(ms).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const READ = { ok: ["본문 읽음", "ok"], robots: ["규칙상 건너뜀", "warn"], blocked: ["접속 막힘", "bad"], paywall: ["유료 기사라 제외", "warn"], "no-body": ["본문 못 찾음", "bad"], failed: ["접속 실패", "bad"] };
+
+function flow(r) {
+  const reads = r.results.flatMap((row) => row.reads);
+  const lines = r.results.flatMap((row) => row.card?.lines || []);
+  const steps = [
+    ["수집", r.counts.collected, "기사"], ["복제 정리", r.counts.afterDuplicates, "기사"], ["미국 경제", r.counts.relevant, "기사"],
+    ["사건", r.counts.events, "개"], ["원문 읽기", reads.filter((x) => x.status === "ok").length, `/${reads.length}건`],
+    ["주장", r.results.reduce((n, x) => n + x.claims.length, 0), "개"], ["검증 통과", lines.filter((x) => x.passed).length, `/${lines.length}문장`],
+  ];
+  return `<div class="flow">${steps.map(([name, n, unit]) => `<div><span class="sub">${name}</span><b>${n}</b><span class="sub">${unit}</span></div>`).join("")}</div>`;
+}
+
+function cards(r) {
+  return r.results.filter((row) => row.card).map((row) => {
+    const kept = row.card.lines.filter((l) => l.passed);
+    const body = kept.filter((l) => l.kind === "sentence").map((l) => `<p>${esc(l.text)}</p>`).join("");
+    const doubts = kept.filter((l) => l.kind === "doubt").map((l) => `<p class="sub">짚어볼 점: ${esc(l.text)}</p>`).join("");
+    return `<div class="panel"><h3>${esc(row.card.title)}</h3>${body}${doubts}<p class="sub">언론사 ${row.outlets.length}곳: ${esc(row.outlets.join(", "))}</p></div>`;
+  }).join("") || `<p class="sub">만들어진 카드가 없어요.</p>`;
+}
+
+function sources(r) {
+  const totals = new Map();
+  for (const item of r.collected) totals.set(item.source, (totals.get(item.source) || 0) + item.copies);
+  const rows = [...totals].sort((a, b) => b[1] - a[1]).map(([name, n]) => `<tr><td>${esc(name)}</td><td class="num">${n}</td></tr>`).join("");
+  const failed = r.sources.filter((s) => s.error).map((s) => `<li>${esc(s.via)} ${esc(s.name)}: ${esc(s.error)}</li>`).join("");
+  return `<div class="table"><table><tr><th>언론사</th><th class="num">시간대 안의 기사</th></tr>${rows}</table></div>${failed ? `<p class="bad">실패한 수집처</p><ul>${failed}</ul>` : ""}
+  <details><summary>수집한 기사 전체 보기 (${r.collected.length}건)</summary><div class="table"><table><tr><th>시각</th><th>언론사</th><th>제목</th><th class="num">복제</th></tr>${r.collected.map((i) => `<tr><td>${time(i.publishedAt)}</td><td>${esc(i.source)}</td><td><a href="${safeUrl(i.url)}" target="_blank" rel="noreferrer">${esc(i.title)}</a></td><td class="num">${i.copies}</td></tr>`).join("")}</table></div></details>`;
+}
+
+function events(r) {
+  const byId = new Map(r.collected.map((i) => [i.id, i]));
+  return `<div class="table"><table><tr><th>순위</th><th>사건</th><th class="num">점수</th><th class="num">영향</th><th class="num">언론사</th><th class="num">기사</th></tr>
+  ${r.events.map((e, i) => `<tr><td>${i + 1}</td><td><details><summary>${esc(e.title)}</summary><p class="sub">${esc(e.reason)}</p>${e.ids.map((id) => `<p class="sub">${esc(byId.get(id)?.source)} · ${esc(byId.get(id)?.title)}</p>`).join("")}</details></td><td class="num">${e.score}</td><td class="num">${e.impact}</td><td class="num">${e.outlets.length}</td><td class="num">${e.ids.length}</td></tr>`).join("")}</table></div>`;
+}
+
+function trace(row) {
+  const reads = row.reads.map((read) => {
+    const [label, tone] = READ[read.status] || [read.status, "warn"];
+    return `<details><summary><span class="tag ${tone}">${label}</span>${esc(read.source)} · ${esc(read.title)}</summary>
+    <p class="sub"><a href="${safeUrl(read.url)}" target="_blank" rel="noreferrer">원문 열기</a> · 찾은 방법: ${esc(read.how || "-")} · 본문 ${read.bodyLength}자 · 소개글 ${String(read.rss || "").length}자</p>
+    <div class="compare"><div><p class="sub">RSS 소개글</p><div class="body">${esc(read.rss) || "없음"}</div></div><div><p class="sub">발췌한 본문</p><div class="body">${esc(read.body) || "없음"}</div></div></div></details>`;
+  }).join("");
+  const claim = (c, tone) => `<div class="line"><span class="tag ${tone}">${esc(c.status)}</span><span class="sub">${esc(c.id)} · ${esc(c.s)} · ${esc(c.speaker)}</span><p>${esc(c.text)}</p><p class="quote">${esc(c.quote)}</p></div>`;
+  const lines = (row.card?.lines || []).map((l) => `<div class="line ${l.passed ? "" : "fail"}"><span class="tag ${l.passed ? "ok" : "bad"}">${l.passed ? "통과" : "제외"}</span><span class="sub">${l.kind === "doubt" ? "짚어볼 점" : "문장"} · 근거 ${esc(l.claims.join(", ") || "없음")}</span><p class="text">${esc(l.text)}</p>${l.problems.map((p) => `<p class="bad">${esc(p)}</p>`).join("")}</div>`).join("");
+  return `<div class="panel"><h3>${esc(row.title)}</h3>
+  <details open><summary>1. 읽은 기사 (${row.reads.length}건)</summary>${reads}</details>
+  <details><summary>2. 뽑아낸 주장 (${row.claims.length}개, 인용 불일치로 뺀 것 ${row.dropped.length}개)</summary>${row.claims.map((c) => claim(c, "ok")).join("")}${row.dropped.map((c) => claim(c, "bad")).join("")}</details>
+  <details open><summary>3. 문장 검증</summary>${lines || `<p class="sub">주장이 부족해 카드를 만들지 않았어요.</p>`}</details></div>`;
+}
+
+function usage(r) {
+  const totals = new Map();
+  for (const row of r.usage) {
+    const found = totals.get(row.stage) || { calls: 0, input: 0, output: 0 };
+    totals.set(row.stage, { calls: found.calls + 1, input: found.input + row.input, output: found.output + row.output });
+  }
+  const names = { group: "사건 묶기", claims: "주장 추출", write: "카드 작성", verify: "문장 검증" };
+  return `<div class="table"><table><tr><th>단계</th><th class="num">호출</th><th class="num">입력 토큰</th><th class="num">출력 토큰</th></tr>${[...totals].map(([stage, t]) => `<tr><td>${esc(names[stage] || stage)}</td><td class="num">${t.calls}</td><td class="num">${t.input.toLocaleString()}</td><td class="num">${t.output.toLocaleString()}</td></tr>`).join("")}</table></div>`;
+}
+
+async function start() {
+  const app = document.getElementById("app");
+  const response = await fetch("/api/lab");
+  if (response.status === 401) { app.innerHTML = `<p>전용 주소로 들어와 주세요.</p>`; return; }
+  if (!response.ok) { app.innerHTML = `<p>아직 실행 결과가 없어요.</p>`; return; }
+  const r = await response.json();
+  app.innerHTML = `<h1>미국 경제 브리핑 과정 확인</h1>
+  <p class="sub">${esc(r.date)} · ${time(new Date(r.createdAt).getTime())} 실행 · ${r.seconds}초 · ${time(new Date(r.windowStart).getTime())} 이후 기사</p>
+  ${flow(r)}
+  <h2>완성된 카드</h2>${cards(r)}
+  <h2>1. 수집</h2>${sources(r)}
+  <h2>2. 사건 묶기와 순위</h2>${events(r)}
+  <h2>3. 사건별 과정</h2>${r.results.map(trace).join("")}
+  <h2>AI 사용량</h2>${usage(r)}`;
+}
+start().catch(() => { document.getElementById("app").innerHTML = "<p>불러오지 못했어요.</p>"; });
+</script>
+</body>
+</html>

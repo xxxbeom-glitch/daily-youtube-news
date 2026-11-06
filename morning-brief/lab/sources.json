@@ -1,0 +1,19 @@
+{
+  "feeds": [
+    { "name": "매일경제", "url": "https://www.mk.co.kr/rss/30300018/", "region": "domestic", "lang": "ko" },
+    { "name": "매일경제", "url": "https://www.mk.co.kr/rss/50200011/", "region": "domestic", "lang": "ko" },
+    { "name": "매일경제", "url": "https://www.mk.co.kr/rss/30100041/", "region": "domestic", "lang": "ko" },
+    { "name": "한국경제", "url": "https://www.hankyung.com/feed/international", "region": "domestic", "lang": "ko" },
+    { "name": "한국경제", "url": "https://www.hankyung.com/feed/finance", "region": "domestic", "lang": "ko" },
+    { "name": "한국경제", "url": "https://www.hankyung.com/feed/economy", "region": "domestic", "lang": "ko" },
+    { "name": "JTBC", "url": "https://news-ex.jtbc.co.kr/v1/get/rss/section/economy", "region": "domestic", "lang": "ko" },
+    { "name": "JTBC", "url": "https://news-ex.jtbc.co.kr/v1/get/rss/section/international", "region": "domestic", "lang": "ko" },
+    { "name": "CNBC", "url": "https://www.cnbc.com/id/20910258/device/rss/rss.html", "region": "overseas", "lang": "en" },
+    { "name": "CNBC", "url": "https://www.cnbc.com/id/15839135/device/rss/rss.html", "region": "overseas", "lang": "en" },
+    { "name": "가디언", "url": "https://www.theguardian.com/us/business/rss", "region": "overseas", "lang": "en" },
+    { "name": "NPR", "url": "https://feeds.npr.org/1006/rss.xml", "region": "overseas", "lang": "en" },
+    { "name": "BBC", "url": "https://feeds.bbci.co.uk/news/business/rss.xml", "region": "overseas", "lang": "en" }
+  ],
+  "domesticOutlets": ["매일경제", "한국경제", "KBS", "JTBC"],
+  "naverQueries": ["뉴욕증시", "미국 증시", "나스닥", "연준 금리", "미국 고용", "미국 물가", "미국 국채 금리", "달러 환율 미국", "엔비디아 실적", "미국 관세 경제"]
+}

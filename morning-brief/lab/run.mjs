@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { ask, usageLog } from "../lib/ai.js";
 import { fetchNaver, naverFeed, naverKeys } from "../lib/naver.js";
 import { parseFeed } from "../lib/rss.js";
 import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
+import { claudeAsk, usageLog } from "./claude.js";
 import { articleKey, parseSitemap, usCandidate } from "./lists.js";
 import { runLab } from "./pipeline.js";
 import { mergePlacements, readPlacements } from "./placements.js";
@@ -92,7 +92,7 @@ async function main() {
   for (const row of log) if (row.error || row.status === "robots") console.warn(`source failed: ${row.via} ${row.error || row.status}`);
 
   const read = articleReader();
-  const lab = await runLab({ items, ask, read, now, wait });
+  const lab = await runLab({ items, ask: claudeAsk(), read, now, wait });
 
   // 공개 저장소의 로그이므로 기사 내용은 남기지 않고 개수만 남긴다.
   const reads = lab.results.flatMap((row) => row.reads);

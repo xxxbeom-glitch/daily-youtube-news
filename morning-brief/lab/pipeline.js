@@ -1,4 +1,4 @@
-import { ATTACH, CLAIMS, FIX, GROUP, MERGE, VERIFY, WRITE } from "./prompts.js";
+import { ATTACH, CLAIMS, FIX, GROUP, MERGE, OVERLAP, VERIFY, WRITE } from "./prompts.js";
 
 export const MAX_EVENTS = 6;
 export const READ_PER_EVENT = 3;
@@ -183,7 +183,7 @@ async function checkLines(lines, event, ask) {
   if (!lines.length) return [];
   const { results = [] } = await ask("verify", VERIFY, {
     event: event.title,
-    lines: lines.map(({ k, text, cited }) => ({ k, text, evidence: evidence(cited) })),
+    lines: lines.map(({ k, kind, text, cited }) => ({ k, kind, text, evidence: evidence(cited) })),
   });
   return lines.map((line) => {
     const result = results.find((row) => Number(row.k) === line.k);
@@ -235,6 +235,27 @@ async function writeCard(event, claims, ask) {
   };
 }
 
+// 앞 카드와 되풀이되는 문장을 뒤 카드에서 뺀다. 첫 문장은 사건을 소개하므로 남기고, 새 사실이 두 문장도 안 남으면 카드를 뺀다.
+export function removeRepeats(results, drops) {
+  return results.map((row, c) => {
+    if (!row.card || c === 0) return row;
+    const gone = new Set(drops.filter((drop) => Number(drop.c) === c).map((drop) => Number(drop.k)).filter((k) => k > 0));
+    if (!gone.size) return row;
+    const lines = row.card.lines.filter((_, k) => !gone.has(k));
+    const removed = row.card.lines.filter((_, k) => gone.has(k));
+    const sentences = lines.filter((line) => line.kind === "sentence" && line.passed).length;
+    if (sentences < 2) return { ...row, card: null, repeated: row.card };
+    return { ...row, card: { ...row.card, lines, removed } };
+  });
+}
+
+async function trimRepeats(results, ask) {
+  const cards = results.flatMap((row, c) => (row.card ? [{ c, title: row.card.title, lines: row.card.lines.map(({ text }, k) => ({ k, text })) }] : []));
+  if (cards.length < 2) return results;
+  const { drop = [] } = await ask("overlap", OVERLAP, { cards });
+  return removeRepeats(results, drop);
+}
+
 export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const collapsed = collapseDuplicates(items).map((item, index) => ({ ...item, id: index + 1 }));
   const { events: grouped = [] } = await ask("group", GROUP, {
@@ -271,10 +292,11 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const chosen = events.slice(0, MAX_EVENTS);
   const built = [];
   for (const event of chosen) built.push({ event, reads: await readEvent(event, read, wait) });
-  const results = await Promise.all(built.map(async ({ event, reads }) => {
+  const written = await Promise.all(built.map(async ({ event, reads }) => {
     const { claims, dropped } = await claimsFor(event, reads, ask);
     return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
   }));
+  const results = await trimRepeats(written, ask);
 
   return {
     collapsed,

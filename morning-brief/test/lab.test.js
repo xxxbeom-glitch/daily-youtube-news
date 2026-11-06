@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { collapseDuplicates, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { collapseDuplicates, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -152,6 +152,21 @@ test("짚어볼 점은 물음이어야 하고 사건 이름이 검증에 전달�
   assert.equal(lines[1].passed, true);
   assert.equal(lines[2].passed, false);
   assert.deepEqual(seen, ["금리 동결"]);
+});
+
+test("앞 카드와 되풀이되는 문장은 뒤 카드에서 빼고 첫 문장은 남긴다", () => {
+  const line = (text, kind = "sentence") => ({ kind, text, passed: true });
+  const results = [
+    { card: { title: "앞", lines: [line("a"), line("b")] } },
+    { card: { title: "뒤", lines: [line("c"), line("a"), line("d"), line("e")] } },
+    { card: { title: "끝", lines: [line("f"), line("a"), line("b?", "doubt")] } },
+  ];
+  const trimmed = removeRepeats(results, [{ c: 0, k: 1 }, { c: 1, k: 0 }, { c: 1, k: 1 }, { c: 2, k: 1 }]);
+  assert.equal(trimmed[0].card.lines.length, 2);
+  assert.deepEqual(trimmed[1].card.lines.map((row) => row.text), ["c", "d", "e"]);
+  assert.deepEqual(trimmed[1].card.removed.map((row) => row.text), ["a"]);
+  assert.equal(trimmed[2].card, null);
+  assert.equal(trimmed[2].repeated.title, "끝");
 });
 
 test("본문을 못 읽은 사건은 카드를 만들지 않고 나머지는 근거 없는 문장을 표시한다", async () => {

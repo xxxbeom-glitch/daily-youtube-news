@@ -88,8 +88,8 @@ async function main() {
     counts: { collected: items.length, afterDuplicates: lab.collapsed.length, relevant: lab.relevant, events: lab.events.length },
     collected: lab.collapsed.map(brief),
     events: lab.events.map(({ title, impact, reason, merged, items: members, outlets, parts, score }) => ({ title, impact, reason, merged, outlets, parts, score, ids: members.map((item) => item.id) })),
-    results: lab.results.map(({ event, reads: rows, claims, dropped, card }) => ({
-      title: event.title, score: event.score, outlets: event.outlets, reads: rows, claims, dropped, card,
+    results: lab.results.map(({ event, reads: rows, claims, dropped, card, repeated }) => ({
+      title: event.title, score: event.score, outlets: event.outlets, reads: rows, claims, dropped, card, repeated,
     })),
   };
   const response = await fetch(`${SITE}/api/ingest`, {

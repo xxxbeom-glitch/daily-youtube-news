@@ -4,6 +4,7 @@ import { fetchNaver, naverFeed, naverKeys } from "../lib/naver.js";
 import { parseFeed } from "../lib/rss.js";
 import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
+import { articleKey, parseSitemap, usCandidate } from "./lists.js";
 import { runLab } from "./pipeline.js";
 
 const SITE = process.env.LAB_URL || "https://morning-brief-lab.vercel.app";
@@ -18,7 +19,7 @@ async function actionsToken() {
   return (await response.json()).value;
 }
 
-async function collectAll({ feeds, domesticOutlets, naverQueries }, now) {
+async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries }, now) {
   const since = windowStart(now).getTime();
   const log = [];
   const lists = await Promise.all(feeds.map(async (feed) => {
@@ -45,12 +46,25 @@ async function collectAll({ feeds, domesticOutlets, naverQueries }, now) {
       log.push({ name: query, via: "네이버", error: error.message });
     }
   }
+  for (const outlet of outlets) {
+    try {
+      const response = await fetch(outlet.url, { headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const items = parseSitemap(await response.text(), outlet);
+      const kept = items.filter(usCandidate);
+      log.push({ name: outlet.name, via: "목록", received: items.length, kept: kept.length });
+      lists.push(kept);
+    } catch (error) {
+      log.push({ name: outlet.name, via: "목록", error: error.message });
+    }
+  }
   const byUrl = new Map();
   for (const item of lists.flat()) {
     const time = item.publishedAt ?? now.getTime();
     if (time < since || time > now.getTime() + 3600e3) continue;
-    const found = byUrl.get(item.url);
-    if (!found) byUrl.set(item.url, { ...item, desc: item.desc || "", publishedAt: time });
+    const key = articleKey(item.url);
+    const found = byUrl.get(key);
+    if (!found) byUrl.set(key, { ...item, desc: item.desc || "", publishedAt: time });
     else if (!found.desc && item.desc) found.desc = item.desc;
   }
   return { items: [...byUrl.values()], log, since };

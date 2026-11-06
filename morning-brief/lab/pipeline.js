@@ -1,11 +1,12 @@
-import { CLAIMS, GROUP, VERIFY, WRITE } from "./prompts.js";
+import { ATTACH, CLAIMS, FIX, GROUP, VERIFY, WRITE } from "./prompts.js";
 
 export const MAX_EVENTS = 6;
 export const READ_PER_EVENT = 3;
 const TRY_PER_EVENT = 6;
 const DUPLICATE = 0.6;
-const BODY_LIMIT = 6000;
+const BODY_LIMIT = 9000;
 const RETRACTED = /속보|\[포토\]|\[사진\]|\[영상\]/;
+const US_HINT = /미국|美|뉴욕|월가|나스닥|연준|파월|달러|트럼프|블루|엔비디아|테슬라|애플|Fed\b|Nasdaq|Wall Street|stocks?\b|tariff|Treasury|inflation/i;
 
 const compact = (text) => String(text || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
@@ -71,8 +72,13 @@ export function readingOrder(items) {
   return order;
 }
 
-const spaced = (text) => String(text || "").replace(/\s+/g, "").toLowerCase();
-export const quoteFound = (quote, body) => spaced(quote).length >= 15 && spaced(body).includes(spaced(quote));
+// 따옴표와 문장부호 차이는 무시하고, 말줄임표로 줄인 인용은 조각마다 본문에서 찾는다.
+export function quoteFound(quote, body) {
+  if (compact(quote).length < 15) return false;
+  const text = compact(body);
+  const parts = String(quote).split(/\.{2,}|…/).map(compact).filter((part) => part.length >= 8);
+  return parts.length > 0 && parts.every((part) => text.includes(part));
+}
 
 const numbersIn = (text) => (String(text).match(/\d[\d,]*(?:\.\d+)?/g) || []).map((n) => n.replace(/,/g, ""));
 
@@ -112,6 +118,44 @@ async function claimsFor(event, reads, ask) {
   return { claims: kept, dropped };
 }
 
+const evidence = (cited) => cited.map(({ text, quote, speaker, status }) => ({ claim: text, quote, speaker, status }));
+
+function withCitations(line, claims) {
+  const cited = claims.filter((claim) => (line.claims || []).includes(claim.id));
+  return { ...line, cited, numbers: missingNumbers(line.text, cited) };
+}
+
+async function checkLines(lines, ask) {
+  if (!lines.length) return [];
+  const { results = [] } = await ask("verify", VERIFY, {
+    lines: lines.map(({ k, text, cited }) => ({ k, text, evidence: evidence(cited) })),
+  });
+  return lines.map((line) => {
+    const result = results.find((row) => Number(row.k) === line.k);
+    const problems = [];
+    if (!line.cited.length) problems.push("근거 주장 없음");
+    if (line.numbers.length) problems.push(`근거에 없는 숫자: ${line.numbers.join(", ")}`);
+    if (result?.ok === false) problems.push(result.reason || "근거와 맞지 않음");
+    if (!result) problems.push("검사 결과 없음");
+    return { ...line, problems, passed: !problems.length };
+  });
+}
+
+// 틀린 문장은 바로 버리지 않고 근거에 맞게 한 번 고쳐 다시 검사한다. 그래도 틀리면 뺀다.
+async function repairLines(lines, claims, ask) {
+  const failed = lines.filter((line) => !line.passed && line.cited.length);
+  if (!failed.length) return lines;
+  const { lines: fixes = [] } = await ask("fix", FIX, {
+    lines: failed.map(({ k, text, problems, cited }) => ({ k, text, problems, evidence: evidence(cited) })),
+  });
+  const revised = fixes.filter((row) => row.text).map((row) => {
+    const line = lines.find((item) => item.k === Number(row.k));
+    return line && withCitations({ ...line, text: String(row.text), before: line.text, beforeProblems: line.problems }, claims);
+  }).filter(Boolean);
+  const rechecked = await checkLines(revised, ask);
+  return lines.map((line) => rechecked.find((row) => row.k === line.k) || line);
+}
+
 async function writeCard(event, claims, ask) {
   if (claims.length < 2) return null;
   const card = await ask("write", WRITE, {
@@ -119,23 +163,12 @@ async function writeCard(event, claims, ask) {
     claims: claims.map(({ id, s, text, speaker, status }) => ({ id, s, text, speaker, status })),
   });
   const lines = [...(card.sentences || []).map((line) => ({ ...line, kind: "sentence" })), ...(card.doubts || []).map((line) => ({ ...line, kind: "doubt" }))]
-    .map((line, k) => {
-      const cited = claims.filter((claim) => (line.claims || []).includes(claim.id));
-      return { ...line, k, cited, numbers: missingNumbers(line.text, cited) };
-    });
-  const { results = [] } = await ask("verify", VERIFY, {
-    lines: lines.map(({ k, text, cited }) => ({ k, text, evidence: cited.map(({ text: claim, quote, speaker, status }) => ({ claim, quote, speaker, status })) })),
-  });
-  const checked = lines.map((line) => {
-    const result = results.find((row) => Number(row.k) === line.k);
-    const problems = [];
-    if (!line.cited.length) problems.push("근거 주장 없음");
-    if (line.numbers.length) problems.push(`근거에 없는 숫자: ${line.numbers.join(", ")}`);
-    if (result?.ok === false) problems.push(result.reason || "근거와 맞지 않음");
-    if (!result) problems.push("검사 결과 없음");
-    return { kind: line.kind, text: line.text, claims: line.claims || [], problems, passed: !problems.length };
-  });
-  return { title: card.title, lines: checked };
+    .map((line, k) => withCitations({ ...line, k }, claims));
+  const repaired = await repairLines(await checkLines(lines, ask), claims, ask);
+  return {
+    title: card.title,
+    lines: repaired.map(({ kind, text, claims: ids, problems, passed, before, beforeProblems }) => ({ kind, text, claims: ids || [], problems, passed, before, beforeProblems })),
+  };
 }
 
 export async function runLab({ items, ask, read, now, wait = async () => {} }) {
@@ -143,6 +176,16 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const { events: grouped = [] } = await ask("group", GROUP, {
     items: collapsed.map((item) => ({ n: item.id, s: item.source, t: item.title, d: item.desc.slice(0, 200) })),
   });
+  // 한 번에 350건을 보면 관련 기사를 놓치므로, 남은 기사 중 미국 소식으로 보이는 것을 사건에 다시 붙여 본다.
+  const placed = new Set(grouped.flatMap((event) => (event.ids || []).map(Number)));
+  const rest = collapsed.filter((item) => !placed.has(item.id) && US_HINT.test(item.title));
+  if (rest.length && grouped.length) {
+    const { assign = [] } = await ask("attach", ATTACH, {
+      events: grouped.map((event, e) => ({ e, title: event.title })),
+      items: rest.map((item) => ({ n: item.id, s: item.source, t: item.title, d: item.desc.slice(0, 200) })),
+    });
+    for (const row of assign) grouped[Number(row.e)]?.ids?.push(Number(row.n));
+  }
   const byId = new Map(collapsed.map((item) => [item.id, item]));
   const seen = new Set();
   const events = grouped.map((event) => {

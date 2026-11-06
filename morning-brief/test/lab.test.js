@@ -38,6 +38,13 @@ test("인용문은 본문에 실제로 있어야 한다", () => {
   assert.equal(quoteFound("이번 회의에서 기준금리를 인하했다고 밝혔다", body), false);
 });
 
+test("따옴표 차이와 말줄임표로 줄인 인용도 본문에서 찾는다", () => {
+  const body = 'He said "99%의 경우 공장을 짓지 않으면 관세를 내야 하기 때문"이라고 강조했다. 나스닥은 5.5% 내렸고 그 뒤로 시가총액 2조 달러가 사라졌다.';
+  assert.equal(quoteFound("99%의 경우 공장을 짓지 않으면 관세를 내야 하기 때문이라고 강조했다.", body), true);
+  assert.equal(quoteFound("나스닥은 5.5% 내렸고 ... 시가총액 2조 달러가 사라졌다", body), true);
+  assert.equal(quoteFound("나스닥은 5.5% 내렸고 ... 시가총액 9조 달러가 사라졌다", body), false);
+});
+
 test("금지 경로는 열지 않는다", () => {
   const rules = "User-agent: *\nDisallow: /private\nAllow: /private/open\n\nUser-agent: GPTBot\nDisallow: /";
   assert.equal(robotsAllows(rules, "/news/1"), true);
@@ -51,6 +58,28 @@ test("언론사별 위치에서 본문만 뽑는다", () => {
   const result = extractBody(html, "https://www.hankyung.com/article/1");
   assert.ok(result.text.includes("본문 문장"));
   assert.ok(!result.text.includes("관련 기사"));
+});
+
+test("틀린 문장은 고쳐서 다시 검사하고 고친 뒤에도 틀리면 뺀다", async () => {
+  const body = "연준은 이번 회의에서 기준금리를 5.25%로 동결했다고 밝혔다. ".repeat(10);
+  let verified = 0;
+  const ask = async (stage, _, payload) => {
+    if (stage === "group") return { events: [{ title: "금리 동결", ids: [1], impact: 5, reason: "r" }] };
+    if (stage === "claims") return { claims: [
+      { a: 1, text: "금리가 5.25%로 동결됐다", quote: "기준금리를 5.25%로 동결했다고 밝혔다", speaker: "연준", status: "확정" },
+      { a: 1, text: "회의에서 결정됐다", quote: "연준은 이번 회의에서 기준금리를 5.25%로", speaker: "연준", status: "확정" },
+    ] };
+    if (stage === "write") return { title: "t", sentences: [{ text: "금리가 6%예요.", claims: ["a1-1"] }, { text: "금리가 7%예요.", claims: ["a1-1"] }], doubts: [] };
+    if (stage === "fix") return { lines: [{ k: 0, text: "금리가 5.25%예요." }, { k: 1, text: "금리가 8%예요." }] };
+    verified += 1;
+    return { results: payload.lines.map(({ k }) => ({ k, ok: true })) };
+  };
+  const lab = await runLab({ items: [item(1, "A", "연준 기준금리 동결 결정")], ask, read: async () => ({ status: "ok", body }), now: new Date() });
+  const [good, bad] = lab.results[0].card.lines;
+  assert.equal(verified, 2);
+  assert.equal(good.passed, true);
+  assert.equal(good.before, "금리가 6%예요.");
+  assert.equal(bad.passed, false);
 });
 
 test("본문을 못 읽은 사건은 카드를 만들지 않고 나머지는 근거 없는 문장을 표시한다", async () => {

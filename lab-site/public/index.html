@@ -63,7 +63,7 @@ function cards(r) {
     const kept = row.card.lines.filter((l) => l.passed);
     const body = kept.filter((l) => l.kind === "sentence").map((l) => `<p>${esc(l.text)}</p>`).join("");
     const doubts = kept.filter((l) => l.kind === "doubt").map((l) => `<p class="sub">짚어볼 점: ${esc(l.text)}</p>`).join("");
-    return `<div class="panel"><h3>${esc(row.card.title)}</h3>${body}${doubts}<p class="sub">언론사 ${row.outlets.length}곳: ${esc(row.outlets.join(", "))}</p></div>`;
+    return `<div class="panel"><h3>${esc(row.card.title)}</h3>${body}${doubts}<p class="sub">${row.outlets.length === 1 ? `<span class="tag warn">한 곳만 보도</span>` : ""}언론사 ${row.outlets.length}곳: ${esc(row.outlets.join(", "))}</p></div>`;
   }).join("") || `<p class="sub">만들어진 카드가 없어요.</p>`;
 }
 
@@ -90,7 +90,7 @@ function trace(row) {
     <div class="compare"><div><p class="sub">RSS 소개글</p><div class="body">${esc(read.rss) || "없음"}</div></div><div><p class="sub">발췌한 본문</p><div class="body">${esc(read.body) || "없음"}</div></div></div></details>`;
   }).join("");
   const claim = (c, tone) => `<div class="line"><span class="tag ${tone}">${esc(c.status)}</span><span class="sub">${esc(c.id)} · ${esc(c.s)} · ${esc(c.speaker)}</span><p>${esc(c.text)}</p><p class="quote">${esc(c.quote)}</p></div>`;
-  const lines = (row.card?.lines || []).map((l) => `<div class="line ${l.passed ? "" : "fail"}"><span class="tag ${l.passed ? "ok" : "bad"}">${l.passed ? "통과" : "제외"}</span><span class="sub">${l.kind === "doubt" ? "짚어볼 점" : "문장"} · 근거 ${esc(l.claims.join(", ") || "없음")}</span><p class="text">${esc(l.text)}</p>${l.problems.map((p) => `<p class="bad">${esc(p)}</p>`).join("")}</div>`).join("");
+  const lines = (row.card?.lines || []).map((l) => `<div class="line ${l.passed ? "" : "fail"}"><span class="tag ${l.passed ? "ok" : "bad"}">${l.passed ? "통과" : "제외"}</span><span class="sub">${l.kind === "doubt" ? "짚어볼 점" : "문장"} · 근거 ${esc(l.claims.join(", ") || "없음")}</span><p class="text">${esc(l.text)}</p>${l.problems.map((p) => `<p class="bad">${esc(p)}</p>`).join("")}${l.before ? `<p class="sub">고치기 전: ${esc(l.before)}</p>${(l.beforeProblems || []).map((p) => `<p class="sub">지적: ${esc(p)}</p>`).join("")}` : ""}</div>`).join("");
   return `<div class="panel"><h3>${esc(row.title)}</h3>
   <details open><summary>1. 읽은 기사 (${row.reads.length}건)</summary>${reads}</details>
   <details><summary>2. 뽑아낸 주장 (${row.claims.length}개, 인용 불일치로 뺀 것 ${row.dropped.length}개)</summary>${row.claims.map((c) => claim(c, "ok")).join("")}${row.dropped.map((c) => claim(c, "bad")).join("")}</details>
@@ -103,7 +103,7 @@ function usage(r) {
     const found = totals.get(row.stage) || { calls: 0, input: 0, output: 0 };
     totals.set(row.stage, { calls: found.calls + 1, input: found.input + row.input, output: found.output + row.output });
   }
-  const names = { group: "사건 묶기", claims: "주장 추출", write: "카드 작성", verify: "문장 검증" };
+  const names = { group: "사건 묶기", attach: "빠진 기사 다시 붙이기", claims: "주장 추출", write: "카드 작성", verify: "문장 검증", fix: "틀린 문장 고치기" };
   return `<div class="table"><table><tr><th>단계</th><th class="num">호출</th><th class="num">입력 토큰</th><th class="num">출력 토큰</th></tr>${[...totals].map(([stage, t]) => `<tr><td>${esc(names[stage] || stage)}</td><td class="num">${t.calls}</td><td class="num">${t.input.toLocaleString()}</td><td class="num">${t.output.toLocaleString()}</td></tr>`).join("")}</table></div>`;
 }
 

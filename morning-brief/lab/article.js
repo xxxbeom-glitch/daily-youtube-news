@@ -20,6 +20,15 @@ const NOISE = "script,style,noscript,iframe,figure,figcaption,aside,nav,footer,f
 
 const squeeze = (text) => String(text || "").replace(/\s+/g, " ").trim();
 
+// 본문 앞뒤에 붙는 영상 안내와 구독 문구를 뗀다.
+const TRIM = [
+  /^watch now VIDEO[\d:]+ .{0,160}?(?:News Videos?|Videos?) /i,
+  / ?Choose CNBC as your preferred source.*$/i,
+  / ?Explore more on these topics.*$/i,
+  / ?Share Reuse this content$/i,
+];
+const trimmed = (text) => TRIM.reduce((body, pattern) => body.replace(pattern, ""), text).trim();
+
 function fromStructuredData($) {
   let best = "";
   const walk = (value) => {
@@ -73,7 +82,7 @@ export function extractBody(html, url) {
     { how: "문단 모음", text: fromParagraphs($) },
   ];
   const picked = candidates.find((candidate) => candidate.text.length >= MIN_BODY) || { how: "없음", text: "" };
-  return { ...picked, paywall: PAYWALL.test($("body").text()) };
+  return { ...picked, text: trimmed(picked.text), paywall: PAYWALL.test($("body").text()) };
 }
 
 function robotsGroups(text) {

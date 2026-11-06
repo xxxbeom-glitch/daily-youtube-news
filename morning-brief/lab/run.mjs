@@ -5,7 +5,7 @@ import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
 import { claudeAsk, usageLog } from "./claude.js";
 import { articleKey, countSummary, parseSitemap, usCandidate } from "./lists.js";
-import { runLab, solidCard } from "./pipeline.js";
+import { qualitySummary, runLab, solidCard } from "./pipeline.js";
 import { mergePlacements, readPlacements } from "./placements.js";
 
 const SITE = process.env.LAB_URL || "https://morning-brief-lab.vercel.app";
@@ -99,12 +99,15 @@ async function main() {
   const lines = lab.results.flatMap((row) => row.card?.lines || []);
   console.log(`events ${lab.events.length}, reads ${JSON.stringify(statuses)}, cards ${lab.results.filter((row) => solidCard(row.card)).length}, lines passed ${lines.filter((l) => l.passed).length}/${lines.length}`);
 
+  console.log(`quality ${JSON.stringify(qualitySummary(lab.results, lab.review))}`);
+
   const report = {
     date: kstDate(now),
     createdAt: now.toISOString(),
     windowStart: new Date(since).toISOString(),
     seconds: Math.round((Date.now() - started) / 1000),
     usage: usageLog,
+    review: lab.review,
     sources: log,
     counts: { collected: items.length, afterDuplicates: lab.collapsed.length, relevant: lab.relevant, events: lab.events.length },
     collected: lab.collapsed.map(brief),

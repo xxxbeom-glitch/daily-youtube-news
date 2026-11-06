@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { capCards, collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent, solidCard } from "../lab/pipeline.js";
+import { capCards, collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, qualitySummary, readingOrder, runLab, scoreEvent, solidCard } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -277,4 +277,37 @@ test("합치기와 되풀이 점검이 실패해도 카드는 그대로 나온�
 
 test("사건 묶기가 실패하면 실행을 멈춘다", async () => {
   await assert.rejects(run(flow((stage) => stage === "group")), /AI 실패/);
+});
+
+test("품질 요약은 개수와 기사 주소 지문만 담고 글자는 담지 않는다", () => {
+  const row = (title, lines, urls) => ({ event: { outlets: urls.length === 1 ? ["A"] : ["A", "B"], items: urls.map((url) => ({ url })) }, card: { title, lines } });
+  const good = [{ kind: "sentence", passed: true, text: "비밀 문장이에요." }, { kind: "sentence", passed: true, text: "Powell 발언이에요." }, { kind: "doubt", passed: true, text: "정말일까요?" }];
+  const thin = [{ kind: "sentence", passed: true, text: "하나" }, { kind: "sentence", passed: false, text: "둘" }];
+  const results = [row("카드", good, ["https://a.example/1", "https://b.example/2"]), row("얕음", thin, ["https://a.example/3"]), { event: { outlets: [], items: [] }, card: null }];
+  const summary = qualitySummary(results, { flags: [{ c: 0, issue: "shallow" }, { c: 0, issue: "shallow" }, { c: 0, issue: "지어낸 문구" }] });
+  assert.equal(summary.cards, 1);
+  assert.equal(summary.thin, 1);
+  assert.equal(summary.noCard, 1);
+  assert.equal(summary.oneOutlet, 0);
+  assert.equal(summary.failedLines, 1);
+  assert.equal(summary.doubts, 1);
+  assert.equal(summary.english, 1);
+  assert.deepEqual(summary.flags, { shallow: 2, other: 1 });
+  assert.equal(summary.ranks[0].length, 2);
+  assert.match(summary.ranks[0][0], /^[0-9a-f]{8}$/);
+  assert.equal(JSON.stringify(summary).includes("비밀"), false);
+});
+
+test("카드 검수는 통과한 문장만 보내고 실패해도 실행을 멈추지 않는다", async () => {
+  let sent;
+  const flagged = flow((stage) => stage === "review");
+  const ask = async (stage, instructions, payload) => {
+    if (stage === "review") { sent = payload; return { flags: [{ c: 0, issue: "unclear" }] }; }
+    return flagged(stage, instructions, payload);
+  };
+  const lab = await run(ask);
+  assert.deepEqual(lab.review.flags, [{ c: 0, issue: "unclear" }]);
+  assert.equal(sent.cards.length, 3);
+  const skipped = await run(flagged);
+  assert.deepEqual(skipped.review, { flags: [] });
 });

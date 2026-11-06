@@ -1,4 +1,6 @@
-import { ATTACH, CLAIMS, FIX, GROUP, MERGE, OVERLAP, VERIFY, WRITE } from "./prompts.js";
+import { createHash } from "node:crypto";
+import { articleKey } from "./lists.js";
+import { ATTACH, CLAIMS, FIX, GROUP, MERGE, OVERLAP, REVIEW, VERIFY, WRITE } from "./prompts.js";
 
 export const MAX_CARDS = 10;
 export const CANDIDATES = 14;
@@ -320,6 +322,40 @@ async function trimRepeats(results, ask) {
   return removeRepeats(results, drop);
 }
 
+const REVIEW_ISSUES = new Set(["off_topic", "shallow", "unclear", "duplicate", "korea"]);
+const fingerprint = (url) => createHash("sha256").update(articleKey(url)).digest("hex").slice(0, 8);
+
+// 다 만든 카드를 읽어 문제 종류만 표시한다. 카드는 바꾸지 않는다.
+async function reviewCards(results, ask) {
+  const cards = results.filter((row) => solidCard(row.card)).map((row, c) => ({ c, title: row.card.title, lines: row.card.lines.filter((line) => line.passed).map((line) => line.text) }));
+  if (!cards.length) return { flags: [] };
+  const { flags = [] } = await optional(ask)("review", REVIEW, { cards });
+  return { flags };
+}
+
+// 공개 로그용 요약이다. 글자는 넣지 않고 개수와 기사 주소 지문만 남긴다.
+export function qualitySummary(results, review = { flags: [] }) {
+  const solid = results.filter((row) => solidCard(row.card));
+  const lines = solid.flatMap((row) => row.card.lines);
+  const kept = lines.filter((line) => line.passed);
+  const flags = {};
+  for (const { issue } of review.flags) {
+    const name = REVIEW_ISSUES.has(issue) ? issue : "other";
+    flags[name] = (flags[name] || 0) + 1;
+  }
+  return {
+    cards: solid.length,
+    thin: results.filter((row) => row.card && !solidCard(row.card)).length,
+    noCard: results.filter((row) => !row.card).length,
+    oneOutlet: solid.filter((row) => row.event.outlets.length === 1).length,
+    failedLines: results.flatMap((row) => row.card?.lines || []).filter((line) => !line.passed).length,
+    doubts: kept.filter((line) => line.kind === "doubt").length,
+    english: kept.filter((line) => latinNames(line.text).length).length,
+    flags,
+    ranks: solid.map((row) => row.event.items.map((item) => fingerprint(item.url))),
+  };
+}
+
 export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const collapsed = collapseDuplicates(items).map((item, index) => ({ ...item, id: index + 1 }));
   const { events: grouped = [] } = await ask("group", GROUP, {
@@ -373,6 +409,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
     collapsed,
     events,
     results,
+    review: await reviewCards(results, ask),
     relevant: seen.size,
   };
 }

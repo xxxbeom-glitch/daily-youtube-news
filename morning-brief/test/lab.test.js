@@ -37,9 +37,9 @@ test("나뉜 사건을 합치면 기사는 겹치지 않고 언론사 수로 다
   assert.equal(merged[0].title, "증시 급락");
 });
 
-test("읽을 기사는 언론사가 겹치지 않고 국내외를 섞는다", () => {
+test("읽을 기사는 해외부터 고르고 언론사가 겹치지 않게 섞는다", () => {
   const order = readingOrder([item(1, "A", "a", { desc: "xxxx" }), item(2, "A", "b", { desc: "xxx" }), item(3, "B", "c", { region: "overseas", desc: "x" })]);
-  assert.deepEqual(order.slice(0, 2).map((row) => row.source), ["A", "B"]);
+  assert.deepEqual(order.slice(0, 2).map((row) => row.source), ["B", "A"]);
 });
 
 test("영어 금액 단위를 코드로 바꾼다", () => {
@@ -49,6 +49,7 @@ test("영어 금액 단위를 코드로 바꾼다", () => {
   assert.equal(koreanUnits("거의 1 million명"), "거의 100만명");
   assert.equal(koreanUnits("$4 billion in sales"), "40억달러 in sales");
   assert.equal(koreanUnits("주가는 $115.16였다"), "주가는 115.16달러였다");
+  assert.equal(koreanUnits("3.2조달러 이상"), "3조2000억달러 이상");
   assert.equal(koreanUnits("5.5% 하락"), "5.5% 하락");
 });
 
@@ -130,6 +131,27 @@ test("영어 이름은 한글로 고치고 재검사에서 틀리면 원래 문�
   assert.equal(first.passed, true);
   assert.equal(second.text, "SanDisk가 22% 내렸어요.");
   assert.equal(second.passed, true);
+});
+
+test("짚어볼 점은 물음이어야 하고 사건 이름이 검증에 전달된다", async () => {
+  const body = "연준은 이번 회의에서 기준금리를 5.25%로 동결했다고 밝혔다. ".repeat(10);
+  const seen = [];
+  const ask = async (stage, _, payload) => {
+    if (stage === "group") return { events: [{ title: "금리 동결", ids: [1], impact: 5, reason: "r" }] };
+    if (stage === "claims") return { claims: [
+      { a: 1, text: "금리가 5.25%로 동결됐다", quote: "기준금리를 5.25%로 동결했다고 밝혔다", speaker: "연준", status: "확정" },
+      { a: 1, text: "회의에서 결정됐다", quote: "연준은 이번 회의에서 기준금리를 5.25%로", speaker: "연준", status: "확정" },
+    ] };
+    if (stage === "write") return { title: "t", sentences: [{ text: "금리가 5.25%예요.", claims: ["a1-1"] }], doubts: [{ text: "동결이 이어질까요?", claims: ["a1-1"] }, { text: "동결됐어요.", claims: ["a1-1"] }] };
+    if (stage === "fix") return { lines: [{ k: 2, text: "" }] };
+    seen.push(payload.event);
+    return { results: payload.lines.map(({ k }) => ({ k, ok: true })) };
+  };
+  const lab = await runLab({ items: [item(1, "A", "연준 기준금리 동결 결정")], ask, read: async () => ({ status: "ok", body }), now: new Date() });
+  const lines = lab.results[0].card.lines;
+  assert.equal(lines[1].passed, true);
+  assert.equal(lines[2].passed, false);
+  assert.deepEqual(seen, ["금리 동결"]);
 });
 
 test("본문을 못 읽은 사건은 카드를 만들지 않고 나머지는 근거 없는 문장을 표시한다", async () => {

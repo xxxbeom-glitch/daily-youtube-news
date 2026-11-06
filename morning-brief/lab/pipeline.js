@@ -48,7 +48,7 @@ export function scoreEvent(event, now) {
   const parts = {
     impact: event.impact * 10,
     outlets: Math.min(outlets.size, 6) * 6,
-    bothRegions: regions.size > 1 ? 5 : 0,
+    bothRegions: regions.size > 1 ? 10 : 0,
     fresh: hours <= 6 ? 3 : 0,
   };
   return { outlets: [...outlets], parts, score: Object.values(parts).reduce((sum, value) => sum + value, 0) };
@@ -77,9 +77,10 @@ export function mergeEvents(events, merges, now) {
   return rank(merged.filter((_, index) => !absorbed.has(index)), now);
 }
 
-// 언론사가 겹치지 않게, 국내외가 섞이게, 속보보다 내용이 있어 보이는 기사를 먼저 고른다.
+// 해외 기사부터, 언론사가 겹치지 않게, 국내외가 섞이게, 속보보다 내용이 있어 보이는 기사를 먼저 고른다.
 export function readingOrder(items) {
-  const ranked = [...items].sort((a, b) => Number(RETRACTED.test(a.title)) - Number(RETRACTED.test(b.title)) || b.desc.length - a.desc.length);
+  const domestic = (item) => Number(item.region !== "overseas");
+  const ranked = [...items].sort((a, b) => domestic(a) - domestic(b) || Number(RETRACTED.test(a.title)) - Number(RETRACTED.test(b.title)) || b.desc.length - a.desc.length);
   const order = [];
   const used = new Set();
   const regions = new Set();
@@ -125,6 +126,7 @@ export function koreanUnits(text) {
       const value = Math.round(Number(number.replace(/,/g, "")) * UNITS[unit.toLowerCase()]);
       return `${koreanAmount(value)}${dollar || word ? "달러" : ""}`;
     })
+    .replace(/(\d+\.\d+)조/g, (_, number) => koreanAmount(Math.round(Number(number) * 1e12)))
     .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1달러");
 }
 
@@ -177,9 +179,10 @@ function withCitations(line, claims) {
   return { ...line, cited, numbers: missingNumbers(line.text, cited), names: latinNames(line.text) };
 }
 
-async function checkLines(lines, ask) {
+async function checkLines(lines, event, ask) {
   if (!lines.length) return [];
   const { results = [] } = await ask("verify", VERIFY, {
+    event: event.title,
     lines: lines.map(({ k, text, cited }) => ({ k, text, evidence: evidence(cited) })),
   });
   return lines.map((line) => {
@@ -189,17 +192,19 @@ async function checkLines(lines, ask) {
     if (line.numbers.length) problems.push(`근거에 없는 숫자: ${line.numbers.join(", ")}`);
     if (result?.ok === false) problems.push(result.reason || "근거와 맞지 않음");
     if (!result) problems.push("검사 결과 없음");
+    if (line.kind === "doubt" && !/\?\s*$/.test(line.text)) problems.push("물음 형태가 아님");
     return { ...line, problems, passed: !problems.length };
   });
 }
 
 // 틀린 문장은 바로 버리지 않고 근거에 맞게 한 번 고쳐 다시 검사한다. 그래도 틀리면 뺀다.
-async function repairLines(lines, claims, ask) {
+async function repairLines(lines, claims, event, ask) {
   const failed = lines.filter((line) => line.cited.length && (!line.passed || line.names.length));
   if (!failed.length) return lines;
   const { lines: fixes = [] } = await ask("fix", FIX, {
-    lines: failed.map(({ k, text, problems, names, cited }) => ({
-      k, text, evidence: evidence(cited),
+    event: event.title,
+    lines: failed.map(({ k, kind, text, problems, names, cited }) => ({
+      k, kind, text, evidence: evidence(cited),
       problems: names.length ? [...problems, `영어 이름을 한글로 바꿀 것: ${names.join(", ")}`] : problems,
     })),
   });
@@ -207,7 +212,7 @@ async function repairLines(lines, claims, ask) {
     const line = lines.find((item) => item.k === Number(row.k));
     return line && withCitations({ ...line, text: koreanUnits(row.text), before: line.text, beforeProblems: line.problems }, claims);
   }).filter(Boolean);
-  const rechecked = await checkLines(revised, ask);
+  const rechecked = await checkLines(revised, event, ask);
   // 표기만 고친 문장이 재검사에서 틀리면 통과했던 원래 문장을 쓴다.
   return lines.map((line) => {
     const row = rechecked.find((item) => item.k === line.k);
@@ -223,7 +228,7 @@ async function writeCard(event, claims, ask) {
   });
   const lines = [...(card.sentences || []).map((line) => ({ ...line, kind: "sentence" })), ...(card.doubts || []).map((line) => ({ ...line, kind: "doubt" }))]
     .map((line, k) => withCitations({ ...line, text: koreanUnits(line.text), k }, claims));
-  const repaired = await repairLines(await checkLines(lines, ask), claims, ask);
+  const repaired = await repairLines(await checkLines(lines, event, ask), claims, event, ask);
   return {
     title: koreanUnits(card.title),
     lines: repaired.map(({ kind, text, claims: ids, problems, passed, before, beforeProblems }) => ({ kind, text, claims: ids || [], problems, passed, before, beforeProblems })),
@@ -237,7 +242,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   });
   // 한 번에 350건을 보면 관련 기사를 놓치므로, 남은 기사 중 미국 소식으로 보이는 것을 사건에 다시 붙여 본다.
   const placed = new Set(grouped.flatMap((event) => (event.ids || []).map(Number)));
-  const rest = collapsed.filter((item) => !placed.has(item.id) && US_HINT.test(item.title));
+  const rest = collapsed.filter((item) => !placed.has(item.id) && (item.region === "overseas" || US_HINT.test(item.title)));
   if (rest.length && grouped.length) {
     const { assign = [] } = await ask("attach", ATTACH, {
       events: grouped.map((event, e) => ({ e, title: event.title })),

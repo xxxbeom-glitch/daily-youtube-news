@@ -37,4 +37,6 @@ jobs:
       - run: node scripts/generate.mjs
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NAVER_API_KEY_ID: ${{ secrets.NAVER_API_KEY_ID }}
+          NAVER_API_KEY: ${{ secrets.NAVER_API_KEY }}
           FORCE: ${{ inputs.force }}

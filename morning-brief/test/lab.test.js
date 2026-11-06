@@ -311,3 +311,11 @@ test("카드 검수는 통과한 문장만 보내고 실패해도 실행을 멈�
   const skipped = await run(flagged);
   assert.deepEqual(skipped.review, { flags: [] });
 });
+
+test("뽑은 주장 중 카드에 쓴 비율을 볼 수 있게 센다", () => {
+  const lines = [{ kind: "sentence", passed: true, text: "가", claims: ["a1-1"] }, { kind: "sentence", passed: true, text: "나", claims: ["a1-1", "a1-2"] }, { kind: "sentence", passed: false, text: "다", claims: ["a1-3"] }];
+  const row = { event: { outlets: ["A"], items: [] }, claims: [{ id: "a1-1" }, { id: "a1-2" }, { id: "a1-3" }, { id: "a1-4" }], card: { title: "t", lines } };
+  const summary = qualitySummary([row]);
+  assert.equal(summary.claims, 4);
+  assert.equal(summary.claimsUsed, 2);
+});

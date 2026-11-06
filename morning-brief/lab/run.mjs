@@ -29,7 +29,7 @@ async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const items = parseFeed(await response.text(), { ...feed, use: "lab" });
       log.push({ name: feed.name, via: "RSS", received: items.length });
-      return items;
+      return items.map((item) => ({ ...item, route: "rss" }));
     } catch (error) {
       log.push({ name: feed.name, via: "RSS", error: error.message });
       return [];
@@ -42,7 +42,7 @@ async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries
       const items = await fetchNaver(feed, keys, fetch);
       const kept = items.filter((item) => domesticOutlets.includes(item.source));
       log.push({ name: query, via: "네이버", received: items.length, kept: kept.length });
-      lists.push(kept);
+      lists.push(kept.map((item) => ({ ...item, route: "naver" })));
     } catch (error) {
       log.push({ name: query, via: "네이버", error: error.message });
     }
@@ -55,7 +55,7 @@ async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries
       // 경제 페이지 윗칸의 기사는 제목에 단어가 없어도 후보로 둔다.
       const kept = items.filter((item) => usCandidate(item) || placed.has(articleKey(item.url)));
       log.push({ name: outlet.name, via: "목록", received: items.length, kept: kept.length });
-      lists.push(kept);
+      lists.push(kept.map((item) => ({ ...item, route: "list" })));
     } catch (error) {
       log.push({ name: outlet.name, via: "목록", error: error.message });
     }
@@ -66,8 +66,12 @@ async function collectAll({ feeds, lists: outlets, domesticOutlets, naverQueries
     if (time < since || time > now.getTime() + 3600e3) continue;
     const key = articleKey(item.url);
     const found = byUrl.get(key);
-    if (!found) byUrl.set(key, { ...item, desc: item.desc || "", publishedAt: time });
-    else if (!found.desc && item.desc) found.desc = item.desc;
+    if (!found) {
+      byUrl.set(key, { ...item, desc: item.desc || "", publishedAt: time, routes: [item.route] });
+      continue;
+    }
+    if (!found.routes.includes(item.route)) found.routes.push(item.route);
+    if (!found.desc && item.desc) found.desc = item.desc;
   }
   return { items: [...byUrl.values()], log, since };
 }

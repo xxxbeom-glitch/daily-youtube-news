@@ -351,6 +351,8 @@ export function qualitySummary(results, review = { flags: [] }) {
     failedLines: results.flatMap((row) => row.card?.lines || []).filter((line) => !line.passed).length,
     doubts: kept.filter((line) => line.kind === "doubt").length,
     english: kept.filter((line) => latinNames(line.text).length).length,
+    claims: solid.flatMap((row) => row.claims || []).length,
+    claimsUsed: solid.reduce((sum, row) => sum + new Set(row.card.lines.filter((line) => line.passed).flatMap((line) => line.claims || [])).size, 0),
     flags,
     ranks: solid.map((row) => row.event.items.map((item) => fingerprint(item.url))),
   };

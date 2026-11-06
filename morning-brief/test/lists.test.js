@@ -43,3 +43,10 @@ test("언론사별 수집 수와 목록 후보, 편집 위치, 페이지 실패�
   ];
   assert.deepEqual(countSummary(items, log), { outlets: { CNBC: 2, 매일경제: 1 }, listCandidates: 11, placed: 2, pageFailures: 2 });
 });
+
+test("제목 맨 앞의 대문자 단어도 후보로 본다", () => {
+  for (const title of ["Stocks slide on weak data", "Inflation cooled last month", "Tariffs hit importers", "Earnings beat forecasts", "Unemployment claims jump", "Payrolls rose in May"]) {
+    assert.equal(usCandidate({ title }), true, title);
+  }
+  assert.equal(usCandidate({ title: "Tell us about livestock" }), false);
+});

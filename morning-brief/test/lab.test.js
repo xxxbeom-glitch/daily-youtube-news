@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { capCards, collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { capCards, collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent, solidCard } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -183,10 +183,19 @@ test("같은 주제는 두 개까지 고르고 주제 없는 사건은 제한하
   assert.deepEqual(pickEvents(events, 4).map((row) => row.title), ["a", "b", "d", "e"]);
 });
 
+const goodCard = (title) => ({ title, lines: [{ kind: "sentence", passed: true }, { kind: "sentence", passed: true }] });
+
 test("카드는 앞에서부터 정해진 수까지만 남기고 실패한 사건은 다음 순위가 채운다", () => {
-  const rows = [{ card: { title: "1" } }, { card: null }, { card: { title: "2" } }, { card: { title: "3" } }];
+  const rows = [{ card: goodCard("1") }, { card: null }, { card: goodCard("2") }, { card: goodCard("3") }];
   assert.deepEqual(capCards(rows, 2).filter((row) => row.card).map((row) => row.card.title), ["1", "2"]);
   assert.equal(capCards(rows.slice(0, 2), 10).filter((row) => row.card).length, 1);
+});
+
+test("통과한 문장이 두 개 안 되는 카드는 자리를 차지하지 않는다", () => {
+  const thin = { title: "얕음", lines: [{ kind: "sentence", passed: true }, { kind: "sentence", passed: false }, { kind: "doubt", passed: true }] };
+  const rows = [{ card: thin }, { card: goodCard("1") }, { card: goodCard("2") }];
+  assert.equal(solidCard(thin), false);
+  assert.deepEqual(capCards(rows, 2).map((row) => row.card.title), ["얕음", "1", "2"]);
 });
 
 test("짚어볼 점은 되풀이 판정이 나와도 지우지 않는다", () => {
@@ -236,4 +245,36 @@ test("본문을 못 읽은 사건은 카드를 만들지 않고 나머지는 근
   assert.equal(first.card.lines[0].passed, true);
   assert.equal(first.card.lines[1].passed, false);
   assert.equal(lab.results[1].card, null);
+});
+
+const body = "연준은 이번 회의에서 기준금리를 5.25%로 동결했다고 밝혔다. ".repeat(10);
+const flow = (fail) => async (stage, _, payload) => {
+  if (fail(stage, payload)) throw new Error("AI 실패");
+  if (stage === "group") return { events: [{ title: "금리 동결", ids: [1], reason: "r" }, { title: "고용 지표", ids: [2], reason: "r" }, { title: "관세 발표", ids: [3], reason: "r" }] };
+  if (stage === "claims") return { claims: [
+    { a: 1, text: "금리가 5.25%로 동결됐다", quote: "기준금리를 5.25%로 동결했다고 밝혔다", speaker: "연준", status: "확정" },
+    { a: 1, text: "회의에서 결정됐다", quote: "연준은 이번 회의에서 기준금리를 5.25%로", speaker: "연준", status: "확정" },
+  ] };
+  if (stage === "write") return { title: "카드", sentences: [{ text: "금리가 5.25%예요.", claims: ["a1-1"] }, { text: "회의에서 정했어요.", claims: ["a1-2"] }], doubts: [] };
+  if (stage === "verify") return { results: [{ k: 0, ok: true }, { k: 1, ok: true }] };
+  return {};
+};
+const items = () => [item(1, "A", "연준 기준금리 동결"), item(2, "B", "미국 고용 지표 발표"), item(3, "C", "트럼프 관세 발표")];
+const run = (ask) => runLab({ items: items(), ask, read: async () => ({ status: "ok", body }), now: new Date() });
+
+test("한 사건의 AI 호출이 실패해도 나머지 카드는 만든다", async () => {
+  const lab = await run(flow((stage, payload) => stage === "claims" && payload.event === "고용 지표"));
+  assert.equal(lab.results.filter((row) => row.card).length, 2);
+  const failed = lab.results.find((row) => row.event.title === "고용 지표");
+  assert.equal(failed.card, null);
+  assert.deepEqual(failed.claims, []);
+});
+
+test("합치기와 되풀이 점검이 실패해도 카드는 그대로 나온다", async () => {
+  const lab = await run(flow((stage) => stage === "merge" || stage === "overlap"));
+  assert.equal(lab.results.filter((row) => row.card).length, 3);
+});
+
+test("사건 묶기가 실패하면 실행을 멈춘다", async () => {
+  await assert.rejects(run(flow((stage) => stage === "group")), /AI 실패/);
 });

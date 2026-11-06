@@ -5,7 +5,7 @@ import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
 import { claudeAsk, usageLog } from "./claude.js";
 import { articleKey, countSummary, parseSitemap, usCandidate } from "./lists.js";
-import { runLab } from "./pipeline.js";
+import { runLab, solidCard } from "./pipeline.js";
 import { mergePlacements, readPlacements } from "./placements.js";
 
 const SITE = process.env.LAB_URL || "https://morning-brief-lab.vercel.app";
@@ -97,7 +97,7 @@ async function main() {
   const reads = lab.results.flatMap((row) => row.reads);
   const statuses = reads.reduce((all, row) => ({ ...all, [row.status]: (all[row.status] || 0) + 1 }), {});
   const lines = lab.results.flatMap((row) => row.card?.lines || []);
-  console.log(`events ${lab.events.length}, reads ${JSON.stringify(statuses)}, cards ${lab.results.filter((row) => row.card).length}, lines passed ${lines.filter((l) => l.passed).length}/${lines.length}`);
+  console.log(`events ${lab.events.length}, reads ${JSON.stringify(statuses)}, cards ${lab.results.filter((row) => solidCard(row.card)).length}, lines passed ${lines.filter((l) => l.passed).length}/${lines.length}`);
 
   const report = {
     date: kstDate(now),

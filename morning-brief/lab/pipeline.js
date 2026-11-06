@@ -101,15 +101,28 @@ export function pickEvents(events, limit = CANDIDATES, perTopic = PER_TOPIC) {
   return picked;
 }
 
-// 후보를 넉넉히 만들어 두고, 살아남은 카드를 앞에서부터 정해진 수만큼 남긴다.
+// 검사를 통과한 문장이 두 개는 있어야 카드로 보여 준다.
+export const solidCard = (card) => Boolean(card) && card.lines.filter((line) => line.kind === "sentence" && line.passed).length >= 2;
+
+// 후보를 넉넉히 만들어 두고, 살아남은 카드를 앞에서부터 정해진 수만큼 남긴다. 얕은 카드는 시험 기록으로만 둔다.
 export function capCards(results, limit = MAX_CARDS) {
   let cards = 0;
   return results.filter((row) => {
-    if (!row.card) return true;
+    if (!solidCard(row.card)) return true;
     cards += 1;
     return cards <= limit;
   });
 }
+
+// 없어도 카드를 만들 수 있는 단계는 실패해도 빈 답으로 넘어간다.
+const optional = (ask) => async (stage, instructions, payload) => {
+  try {
+    return await ask(stage, instructions, payload);
+  } catch (error) {
+    console.warn(`${stage} skipped: ${error.message}`);
+    return {};
+  }
+};
 
 // 한꺼번에 많이 부르면 AI 사용량 제한에 걸리므로 몇 개씩 나눠 처리한다.
 async function mapLimited(rows, work) {
@@ -301,9 +314,9 @@ export function removeRepeats(results, drops) {
 }
 
 async function trimRepeats(results, ask) {
-  const cards = results.flatMap((row, c) => (row.card ? [{ c, title: row.card.title, lines: row.card.lines.map(({ text, kind }, k) => ({ k, kind, text })) }] : []));
+  const cards = results.flatMap((row, c) => (solidCard(row.card) ? [{ c, title: row.card.title, lines: row.card.lines.map(({ text, kind }, k) => ({ k, kind, text })) }] : []));
   if (cards.length < 2) return results;
-  const { drop = [] } = await ask("overlap", OVERLAP, { cards });
+  const { drop = [] } = await optional(ask)("overlap", OVERLAP, { cards });
   return removeRepeats(results, drop);
 }
 
@@ -316,7 +329,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const placed = new Set(grouped.flatMap((event) => (event.ids || []).map(Number)));
   const rest = collapsed.filter((item) => !placed.has(item.id) && (item.region === "overseas" || US_HINT.test(item.title)));
   if (rest.length && grouped.length) {
-    const { assign = [] } = await ask("attach", ATTACH, {
+    const { assign = [] } = await optional(ask)("attach", ATTACH, {
       events: grouped.map((event, e) => ({ e, title: event.title })),
       items: rest.map((item) => ({ n: item.id, s: item.source, t: item.title, d: item.desc.slice(0, 200) })),
     });
@@ -334,7 +347,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   let events = rank(sorted, now);
   if (events.length > 1) {
     const pool = events.slice(0, MERGE_POOL);
-    const { merges = [], topics = [] } = await ask("merge", MERGE, {
+    const { merges = [], topics = [] } = await optional(ask)("merge", MERGE, {
       events: pool.map((event, e) => ({ e, title: event.title, reason: event.reason, articles: event.items.slice(0, 8).map((item) => item.title) })),
     });
     const labelled = pool.map((event, e) => ({ ...event, topic: String(topics.find((row) => Number(row.e) === e)?.topic || "") }));
@@ -345,8 +358,14 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const built = [];
   for (const event of chosen) built.push({ event, reads: await readEvent(event, read, wait) });
   const written = await mapLimited(built, async ({ event, reads }) => {
-    const { claims, dropped } = await claimsFor(event, reads, ask);
-    return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
+    // 한 사건이 실패하면 그 사건만 비우고, 다음 순위 사건이 자리를 채운다.
+    try {
+      const { claims, dropped } = await claimsFor(event, reads, ask);
+      return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
+    } catch (error) {
+      console.warn(`card skipped: ${error.message}`);
+      return { event, reads, claims: [], dropped: [], card: null };
+    }
   });
   const results = capCards(await trimRepeats(written, ask));
 

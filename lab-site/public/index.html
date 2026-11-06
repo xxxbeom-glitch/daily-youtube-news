@@ -59,7 +59,7 @@ function flow(r) {
 }
 
 function cards(r) {
-  return r.results.filter((row) => row.card).map((row) => {
+  return r.results.filter((row) => (row.card?.lines || []).filter((l) => l.kind === "sentence" && l.passed).length >= 2).map((row) => {
     const kept = row.card.lines.filter((l) => l.passed);
     const body = kept.filter((l) => l.kind === "sentence").map((l) => `<p>${esc(l.text)}</p>`).join("");
     const doubts = kept.filter((l) => l.kind === "doubt").map((l) => `<p class="sub">짚어볼 점: ${esc(l.text)}</p>`).join("");

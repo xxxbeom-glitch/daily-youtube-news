@@ -78,8 +78,8 @@ function sources(r) {
 
 function events(r) {
   const byId = new Map(r.collected.map((i) => [i.id, i]));
-  return `<div class="table"><table><tr><th>순위</th><th>사건</th><th class="num">점수</th><th class="num">영향</th><th class="num">언론사</th><th class="num">기사</th></tr>
-  ${r.events.map((e, i) => `<tr><td>${i + 1}</td><td><details><summary>${esc(e.title)}</summary><p class="sub">${esc(e.reason)}</p>${e.merged?.length ? `<p class="sub">합친 사건: ${esc(e.merged.join(", "))}</p>` : ""}${e.ids.map((id) => `<p class="sub">${esc(byId.get(id)?.source)} · ${esc(byId.get(id)?.title)}</p>`).join("")}</details></td><td class="num">${e.score}</td><td class="num">${e.impact}</td><td class="num">${e.outlets.length}</td><td class="num">${e.ids.length}</td></tr>`).join("")}</table></div>`;
+  return `<div class="table"><table><tr><th>순위</th><th>사건</th><th class="num">점수</th><th class="num">편집 위치</th><th class="num">언론사</th><th class="num">기사</th></tr>
+  ${r.events.map((e, i) => `<tr><td>${i + 1}</td><td><details><summary>${esc(e.title)}</summary><p class="sub">${esc(e.reason)}</p>${e.merged?.length ? `<p class="sub">합친 사건: ${esc(e.merged.join(", "))}</p>` : ""}${e.ids.map((id) => `<p class="sub">${esc(byId.get(id)?.source)} · ${esc(byId.get(id)?.title)}</p>`).join("")}</details></td><td class="num">${e.score}</td><td class="num">${e.placed ?? 0}</td><td class="num">${e.outlets.length}</td><td class="num">${e.ids.length}</td></tr>`).join("")}</table></div>`;
 }
 
 function trace(row) {

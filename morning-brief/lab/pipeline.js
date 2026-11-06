@@ -1,8 +1,11 @@
 import { ATTACH, CLAIMS, FIX, GROUP, MERGE, OVERLAP, VERIFY, WRITE } from "./prompts.js";
 
-export const MAX_EVENTS = 6;
+export const MAX_CARDS = 10;
+export const CANDIDATES = 14;
 export const READ_PER_EVENT = 3;
-const MERGE_POOL = 12;
+const PER_TOPIC = 2;
+const MERGE_POOL = 20;
+const PARALLEL = 4;
 const TRY_PER_EVENT = 6;
 const DUPLICATE = 0.6;
 const BODY_LIMIT = 9000;
@@ -45,16 +48,24 @@ export function scoreEvent(event, now) {
   const regions = new Set(event.items.flatMap((item) => item.copies.map((copy) => copy.region)));
   const newest = Math.max(...event.items.map((item) => item.publishedAt));
   const hours = (now.getTime() - newest) / 3600e3;
+  // 중요도는 AI가 아니라 언론사가 페이지에 놓은 위치로 본다. 한 언론사는 높은 등급으로 한 번만 센다.
+  const copies = event.items.flatMap((item) => item.copies);
+  const top = new Set(copies.flatMap((copy) => copy.placement?.top || []));
+  const major = new Set(copies.flatMap((copy) => copy.placement?.major || []).filter((outlet) => !top.has(outlet)));
   const parts = {
-    impact: event.impact * 10,
+    top: top.size * 15,
+    major: major.size * 8,
     outlets: Math.min(outlets.size, 6) * 6,
     bothRegions: regions.size > 1 ? 10 : 0,
-    fresh: hours <= 6 ? 3 : 0,
+    fresh: hours >= 0 && hours <= 6 ? 3 : 0,
   };
-  return { outlets: [...outlets], parts, score: Object.values(parts).reduce((sum, value) => sum + value, 0) };
+  return { outlets: [...outlets], parts, newest, placed: top.size + major.size, score: Object.values(parts).reduce((sum, value) => sum + value, 0) };
 }
 
-const rank = (events, now) => events.map((event) => ({ ...event, ...scoreEvent(event, now) })).sort((a, b) => b.score - a.score);
+// 동점도 입력 순서에 기대지 않고 늘 같은 순위가 나오게 한다.
+const byRank = (a, b) => b.score - a.score || b.parts.top - a.parts.top || b.items.length - a.items.length || b.newest - a.newest || a.title.localeCompare(b.title);
+
+const rank = (events, now) => events.map((event) => ({ ...event, ...scoreEvent(event, now) })).sort(byRank);
 
 // 같은 사건으로 판정된 묶음을 합친다. 기사는 겹치지 않게 모으고 점수는 다시 계산한다.
 export function mergeEvents(events, merges, now) {
@@ -70,25 +81,49 @@ export function mergeEvents(events, merges, now) {
     return {
       ...event,
       items,
-      impact: Math.max(event.impact, ...parts.map((part) => part.impact)),
       merged: [...(event.merged || []), ...parts.map((part) => part.title)],
     };
   });
   return rank(merged.filter((_, index) => !absorbed.has(index)), now);
 }
 
-// 같은 주제의 사건은 가장 높은 순위 하나만 카드로 만든다. 주제가 없는 사건은 제한하지 않는다.
-export function pickEvents(events, limit = MAX_EVENTS) {
-  const used = new Set();
+// 같은 주제의 사건은 높은 순위부터 두 개까지 고른다. 주제가 없는 사건은 제한하지 않는다.
+export function pickEvents(events, limit = CANDIDATES, perTopic = PER_TOPIC) {
+  const used = new Map();
   const picked = [];
   for (const event of events) {
     if (picked.length >= limit) break;
     const topic = compact(event.topic);
-    if (topic && used.has(topic)) continue;
-    if (topic) used.add(topic);
+    if (topic && (used.get(topic) || 0) >= perTopic) continue;
+    if (topic) used.set(topic, (used.get(topic) || 0) + 1);
     picked.push(event);
   }
   return picked;
+}
+
+// 후보를 넉넉히 만들어 두고, 살아남은 카드를 앞에서부터 정해진 수만큼 남긴다.
+export function capCards(results, limit = MAX_CARDS) {
+  let cards = 0;
+  return results.filter((row) => {
+    if (!row.card) return true;
+    cards += 1;
+    return cards <= limit;
+  });
+}
+
+// 한꺼번에 많이 부르면 AI 사용량 제한에 걸리므로 몇 개씩 나눠 처리한다.
+async function mapLimited(rows, work) {
+  const results = new Array(rows.length);
+  let next = 0;
+  const runner = async () => {
+    while (next < rows.length) {
+      const index = next;
+      next += 1;
+      results[index] = await work(rows[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, rows.length) }, runner));
+  return results;
 }
 
 // 해외 기사부터, 언론사가 겹치지 않게, 국내외가 섞이게, 속보보다 내용이 있어 보이는 기사를 먼저 고른다.
@@ -255,7 +290,7 @@ async function writeCard(event, claims, ask) {
 export function removeRepeats(results, drops) {
   return results.map((row, c) => {
     if (!row.card || c === 0) return row;
-    const gone = new Set(drops.filter((drop) => Number(drop.c) === c).map((drop) => Number(drop.k)).filter((k) => k > 0));
+    const gone = new Set(drops.filter((drop) => Number(drop.c) === c).map((drop) => Number(drop.k)).filter((k) => k > 0 && row.card.lines[k]?.kind !== "doubt"));
     if (!gone.size) return row;
     const lines = row.card.lines.filter((_, k) => !gone.has(k));
     const removed = row.card.lines.filter((_, k) => gone.has(k));
@@ -266,7 +301,7 @@ export function removeRepeats(results, drops) {
 }
 
 async function trimRepeats(results, ask) {
-  const cards = results.flatMap((row, c) => (row.card ? [{ c, title: row.card.title, lines: row.card.lines.map(({ text }, k) => ({ k, text })) }] : []));
+  const cards = results.flatMap((row, c) => (row.card ? [{ c, title: row.card.title, lines: row.card.lines.map(({ text, kind }, k) => ({ k, kind, text })) }] : []));
   if (cards.length < 2) return results;
   const { drop = [] } = await ask("overlap", OVERLAP, { cards });
   return removeRepeats(results, drop);
@@ -292,7 +327,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const sorted = grouped.map((event) => {
     const members = (event.ids || []).map((id) => byId.get(Number(id))).filter((item) => item && !seen.has(item.id));
     members.forEach((item) => seen.add(item.id));
-    return { title: String(event.title || ""), impact: Number(event.impact) || 1, reason: String(event.reason || ""), items: members };
+    return { title: String(event.title || ""), reason: String(event.reason || ""), items: members };
   }).filter((event) => event.title && event.items.length);
 
   // 전체를 한 번에 묶으면 같은 사건이 나뉠 때가 있어, 순위 상위 사건끼리 다시 비교한다.
@@ -309,11 +344,11 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   const chosen = pickEvents(events);
   const built = [];
   for (const event of chosen) built.push({ event, reads: await readEvent(event, read, wait) });
-  const written = await Promise.all(built.map(async ({ event, reads }) => {
+  const written = await mapLimited(built, async ({ event, reads }) => {
     const { claims, dropped } = await claimsFor(event, reads, ask);
     return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
-  }));
-  const results = await trimRepeats(written, ask);
+  });
+  const results = capCards(await trimRepeats(written, ask));
 
   return {
     collapsed,

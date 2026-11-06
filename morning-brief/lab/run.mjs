@@ -109,7 +109,7 @@ async function main() {
     sources: log,
     counts: { collected: items.length, afterDuplicates: lab.collapsed.length, relevant: lab.relevant, events: lab.events.length },
     collected: lab.collapsed.map(brief),
-    events: lab.events.map(({ title, topic, impact, reason, merged, items: members, outlets, parts, score }) => ({ title, topic, impact, reason, merged, outlets, parts, score, ids: members.map((item) => item.id) })),
+    events: lab.events.map(({ title, topic, reason, merged, items: members, outlets, parts, placed, score }) => ({ title, topic, reason, merged, outlets, parts, placed, score, ids: members.map((item) => item.id) })),
     results: lab.results.map(({ event, reads: rows, claims, dropped, card, repeated }) => ({
       title: event.title, score: event.score, outlets: event.outlets, reads: rows, claims, dropped, card, repeated,
     })),

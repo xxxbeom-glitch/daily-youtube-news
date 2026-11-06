@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { capCards, collapseDuplicates, pickEvents, removeRepeats, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -32,9 +32,28 @@ test("나뉜 사건을 합치면 기사는 겹치지 않고 언론사 수로 다
   assert.equal(merged.length, 2);
   const market = merged.find((event) => event.title === "증시 급락");
   assert.equal(market.items.length, 3);
-  assert.equal(market.impact, 5);
   assert.deepEqual(market.merged, ["국채로 이동"]);
-  assert.equal(merged[0].title, "증시 급락");
+});
+
+test("언론사가 윗칸에 올린 곳 수를 가장 크게 본다", () => {
+  const placed = (n, source, placement) => ({ ...item(n, source, `t${n}`), copies: [item(n, source, `t${n}`, { placement })] });
+  const old = new Date(Date.now() + 24 * 3600e3);
+  const parts = scoreEvent({ items: [
+    placed(1, "A", { top: ["A"], major: [] }),
+    placed(2, "B", { top: [], major: ["B"] }),
+    placed(3, "A", { top: [], major: ["A"] }),
+  ] }, old).parts;
+  assert.deepEqual(parts, { top: 15, major: 8, outlets: 12, bothRegions: 0, fresh: 0 });
+});
+
+test("점수가 같으면 입력 순서와 관계없이 같은 순위가 나온다", () => {
+  const row = (n, source, title, publishedAt) => ({ title, items: [{ ...item(n, source, title, { publishedAt }), copies: [item(n, source, title, { publishedAt })] }] });
+  const now = new Date();
+  const time = now.getTime() - 3600e3;
+  const events = [row(1, "A", "나 사건", time), row(2, "B", "가 사건", time), row(3, "C", "다 사건", time + 1000)];
+  const titles = (list) => mergeEvents(list, [], now).map((event) => event.title);
+  assert.deepEqual(titles(events), ["다 사건", "가 사건", "나 사건"]);
+  assert.deepEqual(titles([...events].reverse()), ["다 사건", "가 사건", "나 사건"]);
 });
 
 test("읽을 기사는 해외부터 고르고 언론사가 겹치지 않게 섞는다", () => {
@@ -156,12 +175,28 @@ test("짚어볼 점은 물음이어야 하고 사건 이름이 검증에 전달�
   assert.deepEqual(seen, ["금리 동결"]);
 });
 
-test("같은 주제는 가장 높은 순위 하나만 고르고 주제 없는 사건은 제한하지 않는다", () => {
+test("같은 주제는 두 개까지 고르고 주제 없는 사건은 제한하지 않는다", () => {
   const events = [
-    { title: "a", topic: "데이터센터" }, { title: "b", topic: "데이터 센터" }, { title: "c", topic: "관세" },
+    { title: "a", topic: "데이터센터" }, { title: "b", topic: "데이터 센터" }, { title: "c", topic: "데이터센터" },
     { title: "d", topic: "" }, { title: "e", topic: "" }, { title: "f", topic: "연준" },
   ];
-  assert.deepEqual(pickEvents(events, 4).map((row) => row.title), ["a", "c", "d", "e"]);
+  assert.deepEqual(pickEvents(events, 4).map((row) => row.title), ["a", "b", "d", "e"]);
+});
+
+test("카드는 앞에서부터 정해진 수까지만 남기고 실패한 사건은 다음 순위가 채운다", () => {
+  const rows = [{ card: { title: "1" } }, { card: null }, { card: { title: "2" } }, { card: { title: "3" } }];
+  assert.deepEqual(capCards(rows, 2).filter((row) => row.card).map((row) => row.card.title), ["1", "2"]);
+  assert.equal(capCards(rows.slice(0, 2), 10).filter((row) => row.card).length, 1);
+});
+
+test("짚어볼 점은 되풀이 판정이 나와도 지우지 않는다", () => {
+  const line = (text, kind = "sentence") => ({ kind, text, passed: true });
+  const results = [
+    { card: { title: "앞", lines: [line("a")] } },
+    { card: { title: "뒤", lines: [line("b"), line("c"), line("d"), line("e?", "doubt")] } },
+  ];
+  const trimmed = removeRepeats(results, [{ c: 1, k: 3 }, { c: 1, k: 1 }]);
+  assert.deepEqual(trimmed[1].card.lines.map((row) => row.text), ["b", "d", "e?"]);
 });
 
 test("앞 카드와 되풀이되는 문장은 뒤 카드에서 빼고 첫 문장은 남긴다", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
-import { collapseDuplicates, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
+import { collapseDuplicates, koreanUnits, latinNames, mergeEvents, missingNumbers, quoteFound, readingOrder, runLab, scoreEvent } from "../lab/pipeline.js";
 
 const item = (id, source, title, extra = {}) => ({ id, source, title, desc: "", region: "domestic", url: `https://a.example/${id}`, publishedAt: Date.now(), ...extra });
 
@@ -40,6 +40,20 @@ test("나뉜 사건을 합치면 기사는 겹치지 않고 언론사 수로 다
 test("읽을 기사는 언론사가 겹치지 않고 국내외를 섞는다", () => {
   const order = readingOrder([item(1, "A", "a", { desc: "xxxx" }), item(2, "A", "b", { desc: "xxx" }), item(3, "B", "c", { region: "overseas", desc: "x" })]);
   assert.deepEqual(order.slice(0, 2).map((row) => row.source), ["A", "B"]);
+});
+
+test("영어 금액 단위를 코드로 바꾼다", () => {
+  assert.equal(koreanUnits("3.2tn달러 이상"), "3조2000억달러 이상");
+  assert.equal(koreanUnits("$2tn가 사라졌다"), "2조달러가 사라졌다");
+  assert.equal(koreanUnits("$165 billion 규모"), "1650억달러 규모");
+  assert.equal(koreanUnits("거의 1 million명"), "거의 100만명");
+  assert.equal(koreanUnits("$4 billion in sales"), "40억달러 in sales");
+  assert.equal(koreanUnits("주가는 $115.16였다"), "주가는 115.16달러였다");
+  assert.equal(koreanUnits("5.5% 하락"), "5.5% 하락");
+});
+
+test("영어 이름만 찾고 굳어진 약어는 둔다", () => {
+  assert.deepEqual(latinNames("SanDisk와 Micron이 AI 우려로 S&P 500과 PCE 지표에 12bp 영향"), ["SanDisk", "Micron"]);
 });
 
 test("근거에 없는 숫자를 찾아낸다", () => {
@@ -96,6 +110,26 @@ test("틀린 문장은 고쳐서 다시 검사하고 고친 뒤에도 틀리면 
   assert.equal(good.passed, true);
   assert.equal(good.before, "금리가 6%예요.");
   assert.equal(bad.passed, false);
+});
+
+test("영어 이름은 한글로 고치고 재검사에서 틀리면 원래 문장을 둔다", async () => {
+  const body = "마이크론 주가가 17% 내렸고 샌디스크 주가는 22% 내렸다고 시장이 밝혔다. ".repeat(10);
+  const ask = async (stage, _, payload) => {
+    if (stage === "group") return { events: [{ title: "급락", ids: [1], impact: 5, reason: "r" }] };
+    if (stage === "claims") return { claims: [
+      { a: 1, text: "마이크론이 17% 내렸다", quote: "마이크론 주가가 17% 내렸고 샌디스크 주가는 22% 내렸다고", speaker: "시장", status: "확정" },
+      { a: 1, text: "샌디스크가 22% 내렸다", quote: "샌디스크 주가는 22% 내렸다고 시장이 밝혔다", speaker: "시장", status: "확정" },
+    ] };
+    if (stage === "write") return { title: "t", sentences: [{ text: "Micron이 17% 내렸어요.", claims: ["a1-1"] }, { text: "SanDisk가 22% 내렸어요.", claims: ["a1-2"] }], doubts: [] };
+    if (stage === "fix") return { lines: [{ k: 0, text: "마이크론이 17% 내렸어요." }, { k: 1, text: "샌디스크가 99% 내렸어요." }] };
+    return { results: payload.lines.map(({ k }) => ({ k, ok: true })) };
+  };
+  const lab = await runLab({ items: [item(1, "A", "미국 증시 급락")], ask, read: async () => ({ status: "ok", body }), now: new Date() });
+  const [first, second] = lab.results[0].card.lines;
+  assert.equal(first.text, "마이크론이 17% 내렸어요.");
+  assert.equal(first.passed, true);
+  assert.equal(second.text, "SanDisk가 22% 내렸어요.");
+  assert.equal(second.passed, true);
 });
 
 test("본문을 못 읽은 사건은 카드를 만들지 않고 나머지는 근거 없는 문장을 표시한다", async () => {

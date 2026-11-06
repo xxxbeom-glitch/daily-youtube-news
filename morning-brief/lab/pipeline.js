@@ -104,6 +104,34 @@ export function quoteFound(quote, body) {
   return parts.length > 0 && parts.every((part) => text.includes(part));
 }
 
+const UNITS = { tn: 1e12, trillion: 1e12, bn: 1e9, billion: 1e9, mn: 1e6, million: 1e6 };
+
+function koreanAmount(value) {
+  const parts = [[1e12, "조"], [1e8, "억"], [1e4, "만"]];
+  let rest = value;
+  let text = "";
+  for (const [size, name] of parts) {
+    const count = Math.floor(rest / size);
+    if (count) text += `${count}${name}`;
+    rest -= count * size;
+  }
+  return rest ? `${text}${rest}` : text;
+}
+
+// 영어 금액 단위는 AI가 아니라 코드가 바꾼다. 계산 실수가 숫자 대조를 통과하지 못하게 하기 위해서다.
+export function koreanUnits(text) {
+  return String(text || "")
+    .replace(/(US)?(\$)?\s?(\d[\d,]*(?:\.\d+)?)\s?(tn|trillion|bn|billion|mn|million)\b(?:\s?(달러|dollars?))?/gi, (_, us, dollar, number, unit, word) => {
+      const value = Math.round(Number(number.replace(/,/g, "")) * UNITS[unit.toLowerCase()]);
+      return `${koreanAmount(value)}${dollar || word ? "달러" : ""}`;
+    })
+    .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1달러");
+}
+
+// 대문자 약어(AI, PCE, S&P)는 두고, 한글로 쓸 수 있는 영어 이름만 찾는다.
+export const latinNames = (text) => (String(text).match(/[A-Za-z][A-Za-z&.'-]*[A-Za-z]/g) || [])
+  .filter((word) => !/^[A-Z&.]+$/.test(word) && !/^(?:bp|tn|bn)$/i.test(word));
+
 const numbersIn = (text) => (String(text).match(/\d[\d,]*(?:\.\d+)?/g) || []).map((n) => n.replace(/,/g, ""));
 
 // 문장의 숫자가 근거 주장에 그대로 있는지 코드로 확인한다.
@@ -136,7 +164,7 @@ async function claimsFor(event, reads, ask) {
     const article = articles.find((item) => item.a === Number(claim.a));
     if (!article) continue;
     counts.set(article.a, (counts.get(article.a) || 0) + 1);
-    const entry = { ...claim, id: `a${article.a}-${counts.get(article.a)}`, s: article.s, articleId: article.id };
+    const entry = { ...claim, text: koreanUnits(claim.text), id: `a${article.a}-${counts.get(article.a)}`, s: article.s, articleId: article.id };
     (quoteFound(claim.quote, article.body) ? kept : dropped).push(entry);
   }
   return { claims: kept, dropped };
@@ -146,7 +174,7 @@ const evidence = (cited) => cited.map(({ text, quote, speaker, status }) => ({ c
 
 function withCitations(line, claims) {
   const cited = claims.filter((claim) => (line.claims || []).includes(claim.id));
-  return { ...line, cited, numbers: missingNumbers(line.text, cited) };
+  return { ...line, cited, numbers: missingNumbers(line.text, cited), names: latinNames(line.text) };
 }
 
 async function checkLines(lines, ask) {
@@ -167,17 +195,24 @@ async function checkLines(lines, ask) {
 
 // 틀린 문장은 바로 버리지 않고 근거에 맞게 한 번 고쳐 다시 검사한다. 그래도 틀리면 뺀다.
 async function repairLines(lines, claims, ask) {
-  const failed = lines.filter((line) => !line.passed && line.cited.length);
+  const failed = lines.filter((line) => line.cited.length && (!line.passed || line.names.length));
   if (!failed.length) return lines;
   const { lines: fixes = [] } = await ask("fix", FIX, {
-    lines: failed.map(({ k, text, problems, cited }) => ({ k, text, problems, evidence: evidence(cited) })),
+    lines: failed.map(({ k, text, problems, names, cited }) => ({
+      k, text, evidence: evidence(cited),
+      problems: names.length ? [...problems, `영어 이름을 한글로 바꿀 것: ${names.join(", ")}`] : problems,
+    })),
   });
   const revised = fixes.filter((row) => row.text).map((row) => {
     const line = lines.find((item) => item.k === Number(row.k));
-    return line && withCitations({ ...line, text: String(row.text), before: line.text, beforeProblems: line.problems }, claims);
+    return line && withCitations({ ...line, text: koreanUnits(row.text), before: line.text, beforeProblems: line.problems }, claims);
   }).filter(Boolean);
   const rechecked = await checkLines(revised, ask);
-  return lines.map((line) => rechecked.find((row) => row.k === line.k) || line);
+  // 표기만 고친 문장이 재검사에서 틀리면 통과했던 원래 문장을 쓴다.
+  return lines.map((line) => {
+    const row = rechecked.find((item) => item.k === line.k);
+    return row && (row.passed || !line.passed) ? row : line;
+  });
 }
 
 async function writeCard(event, claims, ask) {
@@ -187,10 +222,10 @@ async function writeCard(event, claims, ask) {
     claims: claims.map(({ id, s, text, speaker, status }) => ({ id, s, text, speaker, status })),
   });
   const lines = [...(card.sentences || []).map((line) => ({ ...line, kind: "sentence" })), ...(card.doubts || []).map((line) => ({ ...line, kind: "doubt" }))]
-    .map((line, k) => withCitations({ ...line, k }, claims));
+    .map((line, k) => withCitations({ ...line, text: koreanUnits(line.text), k }, claims));
   const repaired = await repairLines(await checkLines(lines, ask), claims, ask);
   return {
-    title: card.title,
+    title: koreanUnits(card.title),
     lines: repaired.map(({ kind, text, claims: ids, problems, passed, before, beforeProblems }) => ({ kind, text, claims: ids || [], problems, passed, before, beforeProblems })),
   };
 }

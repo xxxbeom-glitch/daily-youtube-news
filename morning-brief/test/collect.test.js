@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { collect, mergeItems, topicUrl } from "../lib/collect.js";
+import { naverFeed, naverKeys, outletName, parseNaver } from "../lib/naver.js";
 import { parseFeed } from "../lib/rss.js";
 
 const googleFeed = { name: "구글", url: "https://news.google.com/rss/search?q=x", region: "overseas", lang: "en", use: "topic", card: "빅테크" };
@@ -59,4 +60,60 @@ test("영어 주제 검색에는 다섯 언론사 조건을 붙인다", () => {
   assert.match(url.searchParams.get("q"), /site:reuters\.com OR .*site:ft\.com\) when:1d$/);
   assert.equal(url.searchParams.get("ceid"), "US:en");
   assert.equal(new URL(topicUrl({ query: "북한", lang: "ko" })).searchParams.get("q"), "북한 when:1d");
+});
+
+const naverBody = {
+  items: [{
+    title: "<b>코스피</b> 급락 &amp; 반등", originallink: "https://www.yna.co.kr/view/1", link: "https://n.news.naver.com/1",
+    description: "<b>코스피</b>가 내렸어요", pubDate: "Thu, 05 Nov 2026 21:00:00 +0900",
+  }],
+};
+
+test("네이버 결과는 태그를 벗기고 원문 주소로 언론사를 찾는다", () => {
+  const [item] = parseNaver(naverBody, naverFeed({ name: "코스피", card: "기업 공통", query: "코스피" }));
+  assert.equal(item.title, "코스피 급락 & 반등");
+  assert.equal(item.desc, "코스피가 내렸어요");
+  assert.equal(item.url, "https://www.yna.co.kr/view/1");
+  assert.equal(item.source, "연합뉴스");
+  assert.equal(item.via, "naver");
+  assert.equal(outletName("https://biz.chosun.com/a"), "조선일보");
+  assert.equal(outletName("https://www.example.kr/a"), "");
+  const other = { items: [{ ...naverBody.items[0], originallink: "https://www.example.kr/1" }] };
+  assert.equal(parseNaver(other, naverFeed({ name: "코스피", query: "코스피" })).length, 0);
+});
+
+test("키가 없으면 네이버를 호출하지 않는다", async () => {
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(url);
+    return new Response("<item><title>t</title><link>https://a/1</link></item>");
+  };
+  const now = new Date();
+  await collect({
+    sources: [plainFeed], topics: [], naverTopics: [{ name: "n", card: "일반 뉴스", query: "q" }],
+    now, since: new Date(now.getTime() - 1000), fetcher,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(naverKeys({ NAVER_API_KEY_ID: "a" }), null);
+  assert.deepEqual(naverKeys({ NAVER_API_KEY_ID: "a", NAVER_API_KEY: "b" }), { id: "a", secret: "b" });
+});
+
+test("네이버 호출은 키를 헤더로 보내고 실패해도 RSS는 계속한다", async () => {
+  const now = new Date("2026-11-05T22:00:00Z");
+  const seen = [];
+  const fetcher = async (url, init) => {
+    if (!url.includes("naverapihub")) return new Response("<item><title>t</title><link>https://a/1</link></item>");
+    seen.push(init.headers);
+    return url.includes("bad") ? new Response("", { status: 429 }) : Response.json(naverBody);
+  };
+  const { items, sourceErrors } = await collect({
+    sources: [plainFeed], topics: [], fetcher, now, since: new Date(now.getTime() - 86400e3),
+    naverKeys: { id: "id", secret: "secret" },
+    naverTopics: [{ name: "좋음", card: "일반 뉴스", query: "q" }, { name: "나쁨", card: "일반 뉴스", query: "bad" }],
+  });
+  assert.equal(seen[0]["X-NCP-APIGW-API-KEY-ID"], "id");
+  assert.equal(seen[0]["X-NCP-APIGW-API-KEY"], "secret");
+  assert.equal(items.filter((i) => i.via === "naver").length, 1);
+  assert.equal(items.length, 2);
+  assert.deepEqual(sourceErrors, [{ name: "네이버 나쁨", error: "HTTP 429" }]);
 });

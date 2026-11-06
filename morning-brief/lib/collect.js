@@ -1,3 +1,4 @@
+import { fetchNaver, naverFeed } from "./naver.js";
 import { parseFeed } from "./rss.js";
 
 const WIRE_FILTER = "(site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:cnbc.com OR site:ft.com)";
@@ -63,8 +64,8 @@ export function mergeItems(lists, { now, since }) {
     .map((item, index) => ({ ...item, id: index + 1 }));
 }
 
-export async function collect({ sources, topics, now = new Date(), since, fetcher = fetch }) {
-  const feeds = [...sources, ...topics.map(topicFeed)];
+export async function collect({ sources, topics, naverTopics = [], naverKeys = null, now = new Date(), since, fetcher = fetch }) {
+  const feeds = [...sources, ...topics.map(topicFeed), ...(naverKeys ? naverTopics.map(naverFeed) : [])];
   const results = new Array(feeds.length);
   let next = 0;
   await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
@@ -72,7 +73,8 @@ export async function collect({ sources, topics, now = new Date(), since, fetche
       const index = next;
       next += 1;
       try {
-        results[index] = { items: await fetchFeed(feeds[index], fetcher) };
+        const feed = feeds[index];
+        results[index] = { items: await (feed.naver ? fetchNaver(feed, naverKeys, fetcher) : fetchFeed(feed, fetcher)) };
       } catch (error) {
         results[index] = { error: error.message };
       }
@@ -87,7 +89,7 @@ export async function collect({ sources, topics, now = new Date(), since, fetche
       return [];
     }
     if (feed.use === "general") healthyGeneral += 1;
-    return result.items.slice(0, feed.use === "topic" ? PER_TOPIC : PER_FEED);
+    return result.items.slice(0, feed.limit ?? (feed.use === "topic" ? PER_TOPIC : PER_FEED));
   });
   return { items: mergeItems(lists, { now, since }), sourceErrors, healthyGeneral };
 }

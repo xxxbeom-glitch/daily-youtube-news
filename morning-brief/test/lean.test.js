@@ -22,6 +22,17 @@ test("생각을 끄는 단계는 끄고 낮추는 단계는 낮춘다", async ()
   assert.deepEqual(low.output_config, { effort: "low" });
 });
 
+test("영어 이름을 고치는 단계는 생각을 낮음으로 둔다", async () => {
+  const sent = await sentParams("fix", LEAN_THINKING);
+  assert.deepEqual(sent.thinking, { type: "adaptive" });
+  assert.deepEqual(sent.output_config, { effort: "low" });
+});
+
+test("채점은 생각을 보통으로 둘 수 있다", async () => {
+  const sent = await sentParams("grade", { grade: "medium" }, "claude-sonnet-5-5");
+  assert.deepEqual(sent.output_config, { effort: "medium" });
+});
+
 test("설정이 없으면 지금 방식 그대로 보낸다", async () => {
   const sent = await sentParams("claims");
   assert.equal(sent.thinking, undefined);

@@ -98,7 +98,7 @@ async function compareRuns({ lab, seconds, items, read, now, wait }) {
   const baseline = await runLab({ items, ask: claudeAsk(log), read, now, wait, profile: BASELINE });
   const baseSeconds = Math.round((Date.now() - started) / 1000);
   const gradeLog = [];
-  const ask = claudeAsk(gradeLog, { grade: "low" }, GRADER);
+  const ask = claudeAsk(gradeLog, { grade: "medium" }, GRADER);
   const grades = { lean: await gradeCards(lab.results, ask), baseline: await gradeCards(baseline.results, ask) };
   printCompare("lean", lab, usageLog, seconds, grades.lean);
   printCompare("baseline", baseline, log, baseSeconds, grades.baseline);

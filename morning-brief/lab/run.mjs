@@ -128,7 +128,7 @@ async function main() {
   for (const row of log) if (row.error || row.status === "robots") console.warn(`source failed: ${row.via} ${row.error || row.status}`);
 
   const read = onceEach(articleReader());
-  const lab = await runLab({ items, ask: claudeAsk(usageLog, COMPARE ? LEAN_THINKING : {}), read, now, wait, profile: COMPARE ? LEAN : BASELINE });
+  const lab = await runLab({ items, ask: claudeAsk(usageLog, LEAN_THINKING), read, now, wait, profile: LEAN });
   const labSeconds = Math.round((Date.now() - started) / 1000);
 
   // 공개 저장소의 로그이므로 기사 내용은 남기지 않고 개수만 남긴다.

@@ -209,3 +209,28 @@ test("지금 방식은 출처 검사를 하지 않는다", async () => {
 test("카드 쓰기는 생각을 낮음으로 둔다", async () => {
   assert.deepEqual((await sentParams("write", LEAN_THINKING)).output_config, { effort: "low" });
 });
+
+test("언론사 이름이 문장에 있으면 통과한다", () => {
+  const line = { kind: "sentence", text: "가디언은 확장 속도가 불분명하다고 전했어요." };
+  assert.deepEqual(unsourcedSpeakers(line, [claim("가디언", "주장", "가디언")]), []);
+});
+
+test("괄호가 붙은 언론사 출처도 언론사로 본다", () => {
+  const line = { kind: "sentence", text: "대통령은 회의에 참석할 예정인 것으로 보여요." };
+  assert.deepEqual(unsourcedSpeakers(line, [claim("매일경제 (일정 보도)", "전망", "매일경제")]), []);
+});
+
+test("출처가 영어로만 적혀 있으면 대조할 수 없어 넘어간다", () => {
+  const line = { kind: "sentence", text: "윌렌은 매출이 늘 것으로 봤어요." };
+  assert.deepEqual(unsourcedSpeakers(line, [claim("Alex Willen", "주장")]), []);
+});
+
+test("영어 직함도 한글로 바꾸라고 알린다", async () => {
+  const seen = {};
+  const ask = async (stage, instructions, payload) => {
+    if (stage === "write") return { title: "카드", sentences: [{ text: "그는 managing director예요.", claims: ["a1-2"] }, { text: "물가가 높아요.", claims: ["a1-2"] }], doubts: [] };
+    return sourced("그는 전무예요.", seen)(stage, instructions, payload);
+  };
+  await oneCard(ask);
+  assert.ok(seen.fix[0].problems.some((text) => text.includes("직함")));
+});

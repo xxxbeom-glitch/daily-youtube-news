@@ -33,6 +33,5 @@ jobs:
       - run: node lab/run.mjs
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LAB_COMPARE: "1"
           NAVER_API_KEY_ID: ${{ secrets.NAVER_API_KEY_ID }}
           NAVER_API_KEY: ${{ secrets.NAVER_API_KEY }}

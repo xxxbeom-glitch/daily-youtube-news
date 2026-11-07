@@ -288,9 +288,10 @@ export function unsourcedSpeakers(line, cited) {
   const text = compact(line.text);
   const named = (speaker) => String(speaker).split(/[\s,·()/]+/).some((word) => compact(word).length >= 2 && text.includes(compact(word)));
   const missing = cited.filter((claim) => {
-    if (!UNCONFIRMED.has(claim.status) || !claim.speaker) return false;
-    if (claim.speaker === "시장 예상" || claim.speaker === claim.s) return !HEDGED.test(line.text);
-    return !named(claim.speaker);
+    if (!UNCONFIRMED.has(claim.status) || !claim.speaker || named(claim.speaker)) return false;
+    if (claim.speaker === "시장 예상" || claim.speaker.includes(claim.s)) return !HEDGED.test(line.text);
+    // 출처가 영어로만 적혔으면 한글 문장과 대조할 수 없다.
+    return /[가-힣]/.test(claim.speaker);
   });
   return [...new Set(missing.map((claim) => claim.speaker))];
 }
@@ -328,7 +329,7 @@ async function repairLines(lines, claims, event, ask, sourcing) {
       k, kind, text, evidence: evidence(cited),
       problems: [
         ...problems,
-        ...(names.length ? [`영어 이름을 한글로 바꿀 것: ${names.join(", ")}`] : []),
+        ...(names.length ? [`영어 이름과 직함을 한글로 바꿀 것: ${names.join(", ")}`] : []),
         ...(unsourced.length ? [`누구의 말이나 전망인지 문장에 드러낼 것: ${unsourced.join(", ")}`] : []),
       ],
     })),

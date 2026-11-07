@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LEAN_THINKING, makeAsk, usageCost } from "../lab/claude.js";
 import { gradeCards, gradeSummary } from "../lab/grade.js";
-import { LEAN, numberedBody, onceEach, runLab, sentenceList, solidCard } from "../lab/pipeline.js";
+import { LEAN, numberedBody, onceEach, runLab, sentenceList, solidCard, unsourcedSpeakers } from "../lab/pipeline.js";
 
 const reply = (message) => ({ messages: { stream: (params) => ({ finalMessage: async () => message(params) }) } });
 const done = (text) => ({ stop_reason: "end_turn", content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 5 } });
@@ -146,4 +146,66 @@ test("채점 한 건이 실패해도 나머지는 센다", async () => {
   const summary = gradeSummary(await gradeCards([asRow(solid("가")), asRow(solid("나"))], ask));
   assert.equal(summary.failed, 1);
   assert.equal(summary.ok, 2);
+});
+
+const claim = (speaker, status, s = "CNBC") => ({ speaker, status, s });
+
+test("주장인데 말한 사람이 문장에 없으면 잡는다", () => {
+  const line = { kind: "sentence", text: "연준이 금리를 올릴 수 있다는 전망이 있어요." };
+  assert.deepEqual(unsourcedSpeakers(line, [claim("짐 크레이머 CNBC 진행자", "주장")]), ["짐 크레이머 CNBC 진행자"]);
+});
+
+test("말한 사람이나 소속이 문장에 있으면 통과한다", () => {
+  const line = { kind: "sentence", text: "크레이머는 금리가 오를 수 있다고 경고했어요." };
+  assert.deepEqual(unsourcedSpeakers(line, [claim("짐 크레이머 CNBC 진행자", "주장")]), []);
+});
+
+test("확정된 사실은 출처를 요구하지 않는다", () => {
+  assert.deepEqual(unsourcedSpeakers({ kind: "sentence", text: "금리가 올랐어요." }, [claim("연준", "확정")]), []);
+});
+
+test("독자에게 던지는 물음은 검사하지 않는다", () => {
+  assert.deepEqual(unsourcedSpeakers({ kind: "doubt", text: "금리가 오를까요?" }, [claim("크레이머", "전망")]), []);
+});
+
+test("시장 예상과 언론사 서술은 전망임을 드러내면 통과한다", () => {
+  const hedged = { kind: "sentence", text: "금리가 오를 것으로 예상돼요." };
+  const flat = { kind: "sentence", text: "금리가 올라요." };
+  assert.deepEqual(unsourcedSpeakers(hedged, [claim("시장 예상", "전망"), claim("CNBC", "전망")]), []);
+  assert.deepEqual(unsourcedSpeakers(flat, [claim("시장 예상", "전망")]), ["시장 예상"]);
+});
+
+const sourced = (fixed, seen) => async (stage, _, payload) => {
+  if (stage === "group") return { events: [{ title: "금리", ids: [1], reason: "r" }] };
+  if (stage === "claims") return { claims: [{ a: 1, text: "금리가 오를 수 있다", q: [1], speaker: "크레이머", status: "주장" }, { a: 1, text: "물가가 높다", q: [2], speaker: "연준", status: "확정" }] };
+  if (stage === "write") return { title: "카드", sentences: [{ text: "금리가 오를 수 있어요.", claims: ["a1-1"] }, { text: "물가가 높아요.", claims: ["a1-2"] }], doubts: [] };
+  if (stage === "fix") { seen.fix = payload.lines; return { lines: [{ k: 0, text: fixed }] }; }
+  if (stage === "verify") return { results: payload.lines.map(({ k }) => ({ k, ok: !payload.lines[0].text.includes("틀림") })) };
+  return {};
+};
+const oneCard = (ask, profile = LEAN) => runLab({ items: [item(1, "금리")], ask, read: async () => ({ status: "ok", body }), now: new Date(), profile });
+
+test("출처가 빠진 문장은 고치기로 보내 말한 사람을 넣는다", async () => {
+  const seen = {};
+  const lab = await oneCard(sourced("크레이머는 금리가 오를 수 있다고 봤어요.", seen));
+  assert.ok(seen.fix[0].problems.some((text) => text.includes("크레이머")));
+  assert.equal(lab.results[0].card.lines[0].text, "크레이머는 금리가 오를 수 있다고 봤어요.");
+});
+
+test("고친 문장이 틀리면 원래 문장을 남겨 카드를 잃지 않는다", async () => {
+  const lab = await oneCard(sourced("틀림", {}));
+  assert.equal(lab.results[0].card.lines[0].text, "금리가 오를 수 있어요.");
+  assert.equal(lab.results[0].card.lines[0].passed, true);
+});
+
+test("지금 방식은 출처 검사를 하지 않는다", async () => {
+  const seen = {};
+  await oneCard(async (stage, instructions, payload) => (stage === "claims"
+    ? { claims: [{ a: 1, text: "금리가 오를 수 있다", quote: "연준은 이번 회의에서 기준금리를 5.25%로 동결했다고 밝혔다", speaker: "크레이머", status: "주장" }, { a: 1, text: "물가가 높다", quote: "파월 의장은 물가가 아직 높다고 기자들에게 말했다", speaker: "연준", status: "확정" }] }
+    : sourced("x", seen)(stage, instructions, payload)), { wave: 14, pointers: false });
+  assert.equal(seen.fix, undefined);
+});
+
+test("카드 쓰기는 생각을 낮음으로 둔다", async () => {
+  assert.deepEqual((await sentParams("write", LEAN_THINKING)).output_config, { effort: "low" });
 });

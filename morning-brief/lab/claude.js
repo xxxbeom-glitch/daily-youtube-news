@@ -10,7 +10,7 @@ const TIME_LIMIT_MS = 240000;
 export const usageLog = [];
 
 // 돈은 대부분 AI의 생각에 나간다. 옮겨 쓰는 단계는 끄고, 판단이 필요한 단계는 낮춘다.
-export const LEAN_THINKING = { claims: "off", write: "off", fix: "low", overlap: "off", group: "low", attach: "low", merge: "low", verify: "low", review: "low" };
+export const LEAN_THINKING = { claims: "off", write: "low", fix: "low", overlap: "off", group: "low", attach: "low", merge: "low", verify: "low", review: "low" };
 
 const THINKING = {
   off: { thinking: { type: "disabled" } },

@@ -6,8 +6,8 @@ export const MAX_CARDS = 10;
 export const CANDIDATES = 14;
 export const READ_PER_EVENT = 3;
 // 지금 방식은 후보를 다 만들고 원문을 AI가 베껴 쓴다. 절감 방식은 10장이 차면 멈추고 번호만 받는다.
-export const BASELINE = { wave: CANDIDATES, pointers: false };
-export const LEAN = { wave: 0, pointers: true };
+export const BASELINE = { wave: CANDIDATES, pointers: false, sourcing: false };
+export const LEAN = { wave: 0, pointers: true, sourcing: true };
 const PER_TOPIC = 2;
 const MERGE_POOL = 20;
 const PARALLEL = 4;
@@ -15,6 +15,8 @@ const TRY_PER_EVENT = 6;
 const DUPLICATE = 0.6;
 const BODY_LIMIT = 9000;
 const SHORT_PIECE = 15;
+const UNCONFIRMED = new Set(["주장", "전망", "미확인"]);
+const HEDGED = /전망|예상|관측|분석|것으로|듯/;
 const RETRACTED = /속보|\[포토\]|\[사진\]|\[영상\]/;
 const US_HINT = /미국|美|뉴욕|월가|나스닥|연준|파월|달러|트럼프|블루|엔비디아|테슬라|애플|Fed\b|Nasdaq|Wall Street|stocks?\b|tariff|Treasury|inflation/i;
 
@@ -280,9 +282,22 @@ async function claimsFor(event, reads, ask, pointers) {
 
 const evidence = (cited) => cited.map(({ text, quote, speaker, status }) => ({ claim: text, quote, speaker, status }));
 
-function withCitations(line, claims) {
+// 누구의 말인지 문장에 드러났는지 코드로 본다. 틀렸다고 판정하지 않고 고치기로만 보낸다.
+export function unsourcedSpeakers(line, cited) {
+  if (line.kind === "doubt") return [];
+  const text = compact(line.text);
+  const named = (speaker) => String(speaker).split(/[\s,·()/]+/).some((word) => compact(word).length >= 2 && text.includes(compact(word)));
+  const missing = cited.filter((claim) => {
+    if (!UNCONFIRMED.has(claim.status) || !claim.speaker) return false;
+    if (claim.speaker === "시장 예상" || claim.speaker === claim.s) return !HEDGED.test(line.text);
+    return !named(claim.speaker);
+  });
+  return [...new Set(missing.map((claim) => claim.speaker))];
+}
+
+function withCitations(line, claims, sourcing) {
   const cited = claims.filter((claim) => (line.claims || []).includes(claim.id));
-  return { ...line, cited, numbers: missingNumbers(line.text, cited), names: latinNames(line.text) };
+  return { ...line, cited, numbers: missingNumbers(line.text, cited), names: latinNames(line.text), unsourced: sourcing ? unsourcedSpeakers(line, cited) : [] };
 }
 
 async function checkLines(lines, event, ask) {
@@ -304,19 +319,23 @@ async function checkLines(lines, event, ask) {
 }
 
 // 틀린 문장은 바로 버리지 않고 근거에 맞게 한 번 고쳐 다시 검사한다. 그래도 틀리면 뺀다.
-async function repairLines(lines, claims, event, ask) {
-  const failed = lines.filter((line) => line.cited.length && (!line.passed || line.names.length));
+async function repairLines(lines, claims, event, ask, sourcing) {
+  const failed = lines.filter((line) => line.cited.length && (!line.passed || line.names.length || line.unsourced.length));
   if (!failed.length) return lines;
   const { lines: fixes = [] } = await ask("fix", FIX, {
     event: event.title,
-    lines: failed.map(({ k, kind, text, problems, names, cited }) => ({
+    lines: failed.map(({ k, kind, text, problems, names, unsourced, cited }) => ({
       k, kind, text, evidence: evidence(cited),
-      problems: names.length ? [...problems, `영어 이름을 한글로 바꿀 것: ${names.join(", ")}`] : problems,
+      problems: [
+        ...problems,
+        ...(names.length ? [`영어 이름을 한글로 바꿀 것: ${names.join(", ")}`] : []),
+        ...(unsourced.length ? [`누구의 말이나 전망인지 문장에 드러낼 것: ${unsourced.join(", ")}`] : []),
+      ],
     })),
   });
   const revised = fixes.filter((row) => row.text).map((row) => {
     const line = lines.find((item) => item.k === Number(row.k));
-    return line && withCitations({ ...line, text: koreanUnits(row.text), before: line.text, beforeProblems: line.problems }, claims);
+    return line && withCitations({ ...line, text: koreanUnits(row.text), before: line.text, beforeProblems: line.problems }, claims, sourcing);
   }).filter(Boolean);
   const rechecked = await checkLines(revised, event, ask);
   // 표기만 고친 문장이 재검사에서 틀리면 통과했던 원래 문장을 쓴다.
@@ -326,18 +345,18 @@ async function repairLines(lines, claims, event, ask) {
   });
 }
 
-async function writeCard(event, claims, ask) {
+async function writeCard(event, claims, ask, sourcing) {
   if (claims.length < 2) return null;
   const card = await ask("write", WRITE, {
     event: event.title,
     claims: claims.map(({ id, s, text, speaker, status }) => ({ id, s, text, speaker, status })),
   });
   const lines = [...(card.sentences || []).map((line) => ({ ...line, kind: "sentence" })), ...(card.doubts || []).map((line) => ({ ...line, kind: "doubt" }))]
-    .map((line, k) => withCitations({ ...line, text: koreanUnits(line.text), k }, claims));
-  const repaired = await repairLines(await checkLines(lines, event, ask), claims, event, ask);
+    .map((line, k) => withCitations({ ...line, text: koreanUnits(line.text), k }, claims, sourcing));
+  const repaired = await repairLines(await checkLines(lines, event, ask), claims, event, ask, sourcing);
   return {
     title: koreanUnits(card.title),
-    lines: repaired.map(({ kind, text, claims: ids, problems, passed, before, beforeProblems }) => ({ kind, text, claims: ids || [], problems, passed, before, beforeProblems })),
+    lines: repaired.map(({ kind, text, claims: ids, problems, passed, before, beforeProblems, unsourced }) => ({ kind, text, claims: ids || [], problems, passed, before, beforeProblems, unsourced })),
   };
 }
 
@@ -393,6 +412,7 @@ export function qualitySummary(results, review = { flags: [] }) {
     failedLines: results.flatMap((row) => row.card?.lines || []).filter((line) => !line.passed).length,
     doubts: kept.filter((line) => line.kind === "doubt").length,
     english: kept.filter((line) => latinNames(line.text).length).length,
+    unsourced: kept.filter((line) => line.unsourced?.length).length,
     claims: solid.flatMap((row) => row.claims || []).length,
     claimsUsed: solid.reduce((sum, row) => sum + new Set(row.card.lines.filter((line) => line.passed).flatMap((line) => line.claims || [])).size, 0),
     flags,
@@ -443,7 +463,7 @@ export async function runLab({ items, ask, read, now, wait = async () => {}, pro
       // 한 사건이 실패하면 그 사건만 비우고, 다음 순위 사건이 자리를 채운다.
       try {
         const { claims, dropped } = await claimsFor(event, reads, ask, profile.pointers);
-        return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
+        return { event, reads, claims, dropped, card: await writeCard(event, claims, ask, profile.sourcing) };
       } catch (error) {
         console.warn(`card skipped: ${error.message}`);
         return { event, reads, claims: [], dropped: [], card: null };

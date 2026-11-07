@@ -339,9 +339,11 @@ export function qualitySummary(results, review = { flags: [] }) {
   const lines = solid.flatMap((row) => row.card.lines);
   const kept = lines.filter((line) => line.passed);
   const flags = {};
-  for (const { issue } of review.flags) {
+  const flagged = [];
+  for (const { c, issue } of review.flags) {
     const name = REVIEW_ISSUES.has(issue) ? issue : "other";
     flags[name] = (flags[name] || 0) + 1;
+    if (Number.isInteger(Number(c))) flagged.push([Number(c), name]);
   }
   return {
     cards: solid.length,
@@ -354,6 +356,7 @@ export function qualitySummary(results, review = { flags: [] }) {
     claims: solid.flatMap((row) => row.claims || []).length,
     claimsUsed: solid.reduce((sum, row) => sum + new Set(row.card.lines.filter((line) => line.passed).flatMap((line) => line.claims || [])).size, 0),
     flags,
+    flagged,
     ranks: solid.map((row) => row.event.items.map((item) => fingerprint(item.url))),
   };
 }

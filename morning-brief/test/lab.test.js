@@ -298,6 +298,13 @@ test("품질 요약은 개수와 기사 주소 지문만 담고 글자는 담지
   assert.equal(JSON.stringify(summary).includes("비밀"), false);
 });
 
+test("품질 요약은 표시된 카드 번호를 남기되 AI가 쓴 글자는 남기지 않는다", () => {
+  const review = { flags: [{ c: 5, issue: "korea" }, { c: "2", issue: "지어낸 문구" }, { c: "비밀 제목", issue: "shallow" }] };
+  const summary = qualitySummary([], review);
+  assert.deepEqual(summary.flagged, [[5, "korea"], [2, "other"]]);
+  assert.equal(JSON.stringify(summary).includes("비밀"), false);
+});
+
 test("카드 검수는 통과한 문장만 보내고 실패해도 실행을 멈추지 않는다", async () => {
   let sent;
   const flagged = flow((stage) => stage === "review");

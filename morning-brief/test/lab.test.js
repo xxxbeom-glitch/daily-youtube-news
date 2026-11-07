@@ -1,3 +1,4 @@
+import { ATTACH, GROUP } from "../lab/prompts.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractBody, robotsAllows } from "../lab/article.js";
@@ -325,4 +326,9 @@ test("뽑은 주장 중 카드에 쓴 비율을 볼 수 있게 센다", () => {
   const summary = qualitySummary([row]);
   assert.equal(summary.claims, 4);
   assert.equal(summary.claimsUsed, 2);
+});
+
+test("사건 묶기와 붙이기는 한국 투자자의 매매 동향 기사를 뺀다", () => {
+  assert.match(GROUP, /한국 투자자.*서학개미.*뺍니다/);
+  assert.match(ATTACH, /한국 투자자.*서학개미.*붙이지 않습니다/);
 });

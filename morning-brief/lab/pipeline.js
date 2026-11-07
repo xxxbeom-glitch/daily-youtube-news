@@ -289,7 +289,7 @@ export function unsourcedSpeakers(line, cited) {
   const named = (speaker) => String(speaker).split(/[\s,·()/]+/).some((word) => compact(word).length >= 2 && text.includes(compact(word)));
   const missing = cited.filter((claim) => {
     if (!UNCONFIRMED.has(claim.status) || !claim.speaker || named(claim.speaker)) return false;
-    if (claim.speaker === "시장 예상" || claim.speaker.includes(claim.s)) return !HEDGED.test(line.text);
+    if (claim.speaker === "시장 예상" || claim.speaker.startsWith(claim.s)) return !HEDGED.test(line.text);
     // 출처가 영어로만 적혔으면 한글 문장과 대조할 수 없다.
     return /[가-힣]/.test(claim.speaker);
   });

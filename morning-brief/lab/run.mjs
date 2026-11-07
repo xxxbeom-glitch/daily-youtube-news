@@ -3,14 +3,17 @@ import { fetchNaver, naverFeed, naverKeys } from "../lib/naver.js";
 import { parseFeed } from "../lib/rss.js";
 import { kstDate, windowStart } from "../lib/rules.js";
 import { USER_AGENT, articleReader } from "./article.js";
-import { claudeAsk, usageLog } from "./claude.js";
+import { LEAN_THINKING, claudeAsk, usageCost, usageLog } from "./claude.js";
+import { gradeCards, gradeSummary } from "./grade.js";
 import { articleKey, countSummary, parseSitemap, usCandidate } from "./lists.js";
-import { qualitySummary, runLab, solidCard } from "./pipeline.js";
+import { BASELINE, LEAN, onceEach, qualitySummary, runLab, solidCard } from "./pipeline.js";
 import { mergePlacements, readPlacements } from "./placements.js";
 
 const SITE = process.env.LAB_URL || "https://morning-brief-lab.vercel.app";
 const AUDIENCE = "morning-brief-lab";
 const READ_GAP_MS = 1000;
+const COMPARE = process.env.LAB_COMPARE === "1";
+const GRADER = "claude-sonnet-5-5";
 
 async function actionsToken() {
   const { ACTIONS_ID_TOKEN_REQUEST_URL: url, ACTIONS_ID_TOKEN_REQUEST_TOKEN: bearer } = process.env;
@@ -81,6 +84,36 @@ const brief = (item) => ({
   publishedAt: item.publishedAt, copies: item.copies.length,
 });
 
+// 공개 로그이므로 개수만 남긴다.
+function printCompare(label, lab, log, seconds, grades) {
+  const { ranks, ...quality } = qualitySummary(lab.results, lab.review);
+  const row = { calls: log.length, input: log.reduce((sum, r) => sum + r.input, 0), output: log.reduce((sum, r) => sum + r.output, 0), usd: Number(usageCost(log).toFixed(4)), seconds, events: lab.events.length, quality, grade: gradeSummary(grades) };
+  console.log(`compare ${label} ${JSON.stringify(row)}`);
+}
+
+// 같은 기사와 본문으로 지금 방식을 한 번 더 돌리고, 두 결과를 더 똑똑한 모델이 원문과 대조한다.
+async function compareRuns({ lab, seconds, items, read, now, wait }) {
+  const log = [];
+  const started = Date.now();
+  const baseline = await runLab({ items, ask: claudeAsk(log), read, now, wait, profile: BASELINE });
+  const baseSeconds = Math.round((Date.now() - started) / 1000);
+  const gradeLog = [];
+  const ask = claudeAsk(gradeLog, { grade: "low" }, GRADER);
+  const grades = { lean: await gradeCards(lab.results, ask), baseline: await gradeCards(baseline.results, ask) };
+  printCompare("lean", lab, usageLog, seconds, grades.lean);
+  printCompare("baseline", baseline, log, baseSeconds, grades.baseline);
+  const graderUsd = gradeLog.reduce((sum, row) => sum + row.input * 2 + row.output * 10, 0) / 1e6;
+  console.log(`compare grader calls ${gradeLog.length}, usd ${graderUsd.toFixed(4)}`);
+  return {
+    grades,
+    baseline: {
+      usage: log,
+      review: baseline.review,
+      results: baseline.results.map(({ event, claims, card }) => ({ title: event.title, claims, card })),
+    },
+  };
+}
+
 async function main() {
   const now = new Date();
   const started = Date.now();
@@ -94,8 +127,9 @@ async function main() {
   console.log(`collected ${items.length} items from ${log.length} sources: ${JSON.stringify(countSummary(items, log))}`);
   for (const row of log) if (row.error || row.status === "robots") console.warn(`source failed: ${row.via} ${row.error || row.status}`);
 
-  const read = articleReader();
-  const lab = await runLab({ items, ask: claudeAsk(), read, now, wait });
+  const read = onceEach(articleReader());
+  const lab = await runLab({ items, ask: claudeAsk(usageLog, COMPARE ? LEAN_THINKING : {}), read, now, wait, profile: COMPARE ? LEAN : BASELINE });
+  const labSeconds = Math.round((Date.now() - started) / 1000);
 
   // 공개 저장소의 로그이므로 기사 내용은 남기지 않고 개수만 남긴다.
   const reads = lab.results.flatMap((row) => row.reads);
@@ -105,6 +139,8 @@ async function main() {
 
   console.log(`quality ${JSON.stringify(qualitySummary(lab.results, lab.review))}`);
 
+  const comparison = COMPARE ? await compareRuns({ lab, seconds: labSeconds, items, read, now, wait }) : undefined;
+
   const report = {
     date: kstDate(now),
     createdAt: now.toISOString(),
@@ -112,6 +148,7 @@ async function main() {
     seconds: Math.round((Date.now() - started) / 1000),
     usage: usageLog,
     review: lab.review,
+    comparison,
     sources: log,
     counts: { collected: items.length, afterDuplicates: lab.collapsed.length, relevant: lab.relevant, events: lab.events.length },
     collected: lab.collapsed.map(brief),

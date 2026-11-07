@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto";
 import { articleKey } from "./lists.js";
-import { ATTACH, CLAIMS, FIX, GROUP, MERGE, OVERLAP, REVIEW, VERIFY, WRITE } from "./prompts.js";
+import { ATTACH, CLAIMS, CLAIMS_LEAN, FIX, GROUP, MERGE, OVERLAP, REVIEW, VERIFY, WRITE } from "./prompts.js";
 
 export const MAX_CARDS = 10;
 export const CANDIDATES = 14;
 export const READ_PER_EVENT = 3;
+// 지금 방식은 후보를 다 만들고 원문을 AI가 베껴 쓴다. 절감 방식은 10장이 차면 멈추고 번호만 받는다.
+export const BASELINE = { wave: CANDIDATES, pointers: false };
+export const LEAN = { wave: 0, pointers: true };
 const PER_TOPIC = 2;
 const MERGE_POOL = 20;
 const PARALLEL = 4;
 const TRY_PER_EVENT = 6;
 const DUPLICATE = 0.6;
 const BODY_LIMIT = 9000;
+const SHORT_PIECE = 15;
 const RETRACTED = /속보|\[포토\]|\[사진\]|\[영상\]/;
 const US_HINT = /미국|美|뉴욕|월가|나스닥|연준|파월|달러|트럼프|블루|엔비디아|테슬라|애플|Fed\b|Nasdaq|Wall Street|stocks?\b|tariff|Treasury|inflation/i;
 
@@ -221,10 +225,44 @@ async function readEvent(event, read, wait) {
   return reads;
 }
 
-async function claimsFor(event, reads, ask) {
-  const articles = reads.filter((r) => r.status === "ok").map((r, index) => ({ a: index + 1, id: r.id, s: r.source, t: r.title, body: r.body.slice(0, BODY_LIMIT) }));
+// 약어의 마침표로 잘린 짧은 조각은 이웃 문장에 붙인다.
+export function sentenceList(body) {
+  const list = [];
+  let carry = "";
+  for (const piece of String(body).split(/(?<=[.!?…])\s+/)) {
+    const text = carry ? `${carry} ${piece}` : piece;
+    carry = text.length < SHORT_PIECE ? text : "";
+    if (!carry && text) list.push(text);
+  }
+  if (carry && list.length) list[list.length - 1] += ` ${carry}`;
+  else if (carry) list.push(carry);
+  return list;
+}
+
+export const numberedBody = (list) => list.map((line, index) => `[${index + 1}] ${line}`).join(" ");
+
+// 두 방식을 비교할 때 언론사 페이지를 다시 읽지 않고 같은 본문을 쓴다.
+export function onceEach(read) {
+  const seen = new Map();
+  return (url) => {
+    if (!seen.has(url)) seen.set(url, read(url));
+    return seen.get(url);
+  };
+}
+
+function pickedQuote(claim, article) {
+  const rows = (claim.q || []).map((n) => article.lines[Number(n) - 1]);
+  return rows.length && rows.every(Boolean) ? rows.join(" ") : "";
+}
+
+async function claimsFor(event, reads, ask, pointers) {
+  const articles = reads.filter((r) => r.status === "ok").map((r, index) => {
+    const body = r.body.slice(0, BODY_LIMIT);
+    return { a: index + 1, id: r.id, s: r.source, t: r.title, body, lines: pointers ? sentenceList(body) : [] };
+  });
   if (!articles.length) return { claims: [], dropped: [] };
-  const { claims = [] } = await ask("claims", CLAIMS, { event: event.title, articles: articles.map(({ id, ...rest }) => rest) });
+  const sent = articles.map(({ a, s, t, body, lines }) => ({ a, s, t, body: pointers ? numberedBody(lines) : body }));
+  const { claims = [] } = await ask("claims", pointers ? CLAIMS_LEAN : CLAIMS, { event: event.title, articles: sent });
   const counts = new Map();
   const kept = [];
   const dropped = [];
@@ -232,8 +270,10 @@ async function claimsFor(event, reads, ask) {
     const article = articles.find((item) => item.a === Number(claim.a));
     if (!article) continue;
     counts.set(article.a, (counts.get(article.a) || 0) + 1);
-    const entry = { ...claim, text: koreanUnits(claim.text), id: `a${article.a}-${counts.get(article.a)}`, s: article.s, articleId: article.id };
-    (quoteFound(claim.quote, article.body) ? kept : dropped).push(entry);
+    const quote = pointers ? pickedQuote(claim, article) : claim.quote;
+    const entry = { ...claim, quote, text: koreanUnits(claim.text), id: `a${article.a}-${counts.get(article.a)}`, s: article.s, articleId: article.id };
+    const found = pointers ? Boolean(quote) : quoteFound(quote, article.body);
+    (found ? kept : dropped).push(entry);
   }
   return { claims: kept, dropped };
 }
@@ -361,7 +401,7 @@ export function qualitySummary(results, review = { flags: [] }) {
   };
 }
 
-export async function runLab({ items, ask, read, now, wait = async () => {} }) {
+export async function runLab({ items, ask, read, now, wait = async () => {}, profile = BASELINE }) {
   const collapsed = collapseDuplicates(items).map((item, index) => ({ ...item, id: index + 1 }));
   const { events: grouped = [] } = await ask("group", GROUP, {
     items: collapsed.map((item) => ({ n: item.id, s: item.source, t: item.title, d: item.desc.slice(0, 200) })),
@@ -396,19 +436,31 @@ export async function runLab({ items, ask, read, now, wait = async () => {} }) {
   }
 
   const chosen = pickEvents(events);
-  const built = [];
-  for (const event of chosen) built.push({ event, reads: await readEvent(event, read, wait) });
-  const written = await mapLimited(built, async ({ event, reads }) => {
-    // 한 사건이 실패하면 그 사건만 비우고, 다음 순위 사건이 자리를 채운다.
-    try {
-      const { claims, dropped } = await claimsFor(event, reads, ask);
-      return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
-    } catch (error) {
-      console.warn(`card skipped: ${error.message}`);
-      return { event, reads, claims: [], dropped: [], card: null };
-    }
-  });
-  const results = capCards(await trimRepeats(written, ask));
+  const build = async (rows) => {
+    const built = [];
+    for (const event of rows) built.push({ event, reads: await readEvent(event, read, wait) });
+    return mapLimited(built, async ({ event, reads }) => {
+      // 한 사건이 실패하면 그 사건만 비우고, 다음 순위 사건이 자리를 채운다.
+      try {
+        const { claims, dropped } = await claimsFor(event, reads, ask, profile.pointers);
+        return { event, reads, claims, dropped, card: await writeCard(event, claims, ask) };
+      } catch (error) {
+        console.warn(`card skipped: ${error.message}`);
+        return { event, reads, claims: [], dropped: [], card: null };
+      }
+    });
+  };
+  // 모자란 장수만큼만 다음 후보를 만든다.
+  let written = [];
+  let next = 0;
+  while (next < chosen.length) {
+    const need = MAX_CARDS - written.filter((row) => solidCard(row.card)).length;
+    if (need <= 0) break;
+    const size = Math.max(need, profile.wave);
+    written = await trimRepeats([...written, ...await build(chosen.slice(next, next + size))], ask);
+    next += size;
+  }
+  const results = capCards(written);
 
   return {
     collapsed,
